@@ -93,9 +93,11 @@ function createCdrRouter(pool) {
         return res.json({ count: 0, results: [] });
       }
 
-      // Search 2 min window around the call
-      const windowStart = new Date(minTime - 120000).toISOString();
-      const windowEnd = new Date(maxTime + 120000).toISOString();
+      // Configurable window (default 2 min)
+      const windowMs =
+        Math.min(parseInt(req.query.window || "120", 10), 600) * 1000;
+      const windowStart = new Date(minTime - windowMs).toISOString();
+      const windowEnd = new Date(maxTime + windowMs).toISOString();
 
       // Match on callingpartynumber only — traces the same caller through the system
       const numConditions = filtered.map((_, i) => {
