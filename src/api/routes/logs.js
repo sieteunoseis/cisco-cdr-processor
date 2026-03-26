@@ -1,5 +1,6 @@
 const express = require("express");
 const { selectLogFiles, getOneFile } = require("cisco-dime");
+const { toCiscoDate, toCiscoTimezone } = require("cisco-dime/cli/utils/time");
 const axlService = require("cisco-axl");
 const { parseSdlTrace } = require("../../parser/sdl-parser");
 const config = require("../../config");
@@ -119,8 +120,11 @@ function createLogsRouter(pool) {
 
       // Resolve the specific CUCM node that handled this call
       const dimeHost = await resolveNodeHost(clusterConfig, ctx.callManagerId);
+      const fromCisco = toCiscoDate(new Date(ctx.fromDate));
+      const toCisco = toCiscoDate(new Date(ctx.toDate));
+      const tzCisco = toCiscoTimezone("America/Los_Angeles");
       console.log(
-        `DIME collect: host=${dimeHost} cm=${ctx.callManagerId} window=${ctx.fromDate} to ${ctx.toDate}`,
+        `DIME collect: host=${dimeHost} cm=${ctx.callManagerId} from=${fromCisco} to=${toCisco}`,
       );
 
       const logs = await selectLogFiles(
@@ -128,9 +132,9 @@ function createLogsRouter(pool) {
         clusterConfig.username,
         clusterConfig.password,
         "Cisco CallManager",
-        ctx.fromDate,
-        ctx.toDate,
-        "America/Los_Angeles",
+        fromCisco,
+        toCisco,
+        tzCisco,
       );
 
       res.json({
@@ -177,8 +181,11 @@ function createLogsRouter(pool) {
 
       // Resolve the specific CUCM node
       const dimeHost = await resolveNodeHost(clusterConfig, ctx.callManagerId);
+      const fromCisco = toCiscoDate(new Date(ctx.fromDate));
+      const toCisco = toCiscoDate(new Date(ctx.toDate));
+      const tzCisco = toCiscoTimezone("America/Los_Angeles");
       console.log(
-        `DIME sip-ladder: host=${dimeHost} cm=${ctx.callManagerId} numbers=${ctx.numbers.join(",")}`,
+        `DIME sip-ladder: host=${dimeHost} cm=${ctx.callManagerId} from=${fromCisco} to=${toCisco} numbers=${ctx.numbers.join(",")}`,
       );
 
       const logs = await selectLogFiles(
@@ -186,9 +193,9 @@ function createLogsRouter(pool) {
         clusterConfig.username,
         clusterConfig.password,
         "Cisco CallManager",
-        ctx.fromDate,
-        ctx.toDate,
-        "America/Los_Angeles",
+        fromCisco,
+        toCisco,
+        tzCisco,
       );
 
       if (logs.length === 0) {
