@@ -119,6 +119,9 @@ function createLogsRouter(pool) {
 
       // Resolve the specific CUCM node that handled this call
       const dimeHost = await resolveNodeHost(clusterConfig, ctx.callManagerId);
+      console.log(
+        `DIME collect: host=${dimeHost} cm=${ctx.callManagerId} window=${ctx.fromDate} to ${ctx.toDate}`,
+      );
 
       const logs = await selectLogFiles(
         dimeHost,
@@ -144,7 +147,10 @@ function createLogsRouter(pool) {
         count: logs.length,
       });
     } catch (err) {
-      console.error("Log collection failed:", err.message);
+      console.error(
+        `Log collection failed on ${err.host || "unknown"}: ${err.message}`,
+        err.statusCode || "",
+      );
       res.status(500).json({ error: err.message });
     }
   });
@@ -171,6 +177,9 @@ function createLogsRouter(pool) {
 
       // Resolve the specific CUCM node
       const dimeHost = await resolveNodeHost(clusterConfig, ctx.callManagerId);
+      console.log(
+        `DIME sip-ladder: host=${dimeHost} cm=${ctx.callManagerId} numbers=${ctx.numbers.join(",")}`,
+      );
 
       const logs = await selectLogFiles(
         dimeHost,
