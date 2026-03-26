@@ -1,8 +1,12 @@
 -- Migration 002: Create convenience views used by existing team queries
 -- These views make the raw CDR/CMR tables easier to query directly in DBeaver/psql
 
--- cdr_basic: Human-readable timestamps, duration, and core call fields
+-- Drop all views to allow column changes (safe — views are just queries, no data)
+DROP VIEW IF EXISTS cmr_augmented;
+DROP VIEW IF EXISTS cdr_augmented;
 DROP VIEW IF EXISTS cdr_basic;
+
+-- cdr_basic: Human-readable timestamps, duration, and core call fields
 CREATE OR REPLACE VIEW cdr_basic AS
 SELECT
     pkid,
