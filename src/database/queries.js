@@ -57,8 +57,11 @@ async function searchCdr(pool, params) {
     values.push(`%${calling}%`);
   }
   if (called) {
-    conditions.push(`c.finalcalledpartynumber LIKE $${idx++}`);
+    conditions.push(
+      `(c.finalcalledpartynumber LIKE $${idx} OR c.originalcalledpartynumber LIKE $${idx})`,
+    );
     values.push(`%${called}%`);
+    idx++;
   }
   if (device) {
     conditions.push(
