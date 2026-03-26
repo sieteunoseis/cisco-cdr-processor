@@ -141,13 +141,45 @@ async function resolveDevices(pool, clusterConfig, deviceNames, cacheTtl) {
       const cacheKey = `device:${clusterConfig.clusterId}:${name}`;
       await setCache(pool, cacheKey, "device", data, cacheTtl);
     }
+
+    // Second pass: for gateway endpoints (port@hostname), try the hostname
+    const gatewayMisses = uncached.filter(
+      (n) => !looked.has(n) && n.includes("@"),
+    );
+    if (gatewayMisses.length > 0) {
+      const hostnameMap = new Map();
+      const hostnames = [];
+      for (const name of gatewayMisses) {
+        const hostname = name.split("@")[1];
+        if (hostname) {
+          hostnameMap.set(hostname, name);
+          hostnames.push(hostname);
+        }
+      }
+      if (hostnames.length > 0) {
+        const gwLooked = await lookupDevices(clusterConfig, hostnames);
+        for (const [hostname, data] of gwLooked) {
+          const origName = hostnameMap.get(hostname);
+          if (origName) {
+            deviceMap.set(origName, data);
+            const cacheKey = `device:${clusterConfig.clusterId}:${origName}`;
+            await setCache(pool, cacheKey, "device", data, cacheTtl);
+          }
+        }
+      }
+    }
+
+    // Cache negative results for anything still not found
     for (const name of uncached) {
-      if (!looked.has(name)) {
+      if (!deviceMap.has(name)) {
         const empty = {
           description: null,
           userid: null,
           devicepool: null,
           location: null,
+          device_type: null,
+          tkmodel: null,
+          modelname: null,
         };
         const cacheKey = `device:${clusterConfig.clusterId}:${name}`;
         await setCache(pool, cacheKey, "device", empty, cacheTtl);
