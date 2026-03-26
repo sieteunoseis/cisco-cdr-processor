@@ -114,7 +114,8 @@ function createCdrRouter(pool) {
                c.destcause_value, dc.description AS destcause_description,
                c.origcallterminationonbehalfof, c.destcallterminationonbehalfof,
                c.joinonbehalfof, c.lastredirectredirectreason,
-               c.orig_device_description, c.dest_device_description
+               c.orig_device_description, c.orig_device_type,
+               c.dest_device_description, c.dest_device_type
         FROM cdr c
         LEFT JOIN cdr_cause oc ON c.origcause_value = oc.id
         LEFT JOIN cdr_cause dc ON c.destcause_value = dc.id
