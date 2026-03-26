@@ -6,13 +6,40 @@ const DEVICE_NAME_RE = /^[A-Za-z0-9_\-.]+$/;
 
 const AXL_DEVICE_SQL = `
   SELECT d.name, d.description, dp.name AS devicepool,
-         loc.name AS location, eu.userid
+         loc.name AS location, eu.userid, d.tkmodel, tm.name AS modelname
   FROM device d
   LEFT JOIN devicepool dp ON d.fkdevicepool = dp.pkid
   LEFT JOIN location loc ON dp.fklocation = loc.pkid
   LEFT JOIN enduser eu ON d.fkenduser = eu.pkid
+  LEFT JOIN typemodel tm ON d.tkmodel = tm.enum
   WHERE d.name IN (%PLACEHOLDERS%)
 `;
+
+// Classify tkmodel into broad categories
+function classifyModel(tkmodel, modelname) {
+  const m = parseInt(tkmodel, 10);
+  // SIP/H323 trunks
+  if (m === 131 || m === 132 || m === 133 || m === 302 || m === 303)
+    return "trunk";
+  // CTI route point, CTI port
+  if (m === 73 || m === 72) return "cti";
+  // Route list, hunt list, hunt pilot
+  if (m === 282 || m === 283 || m === 131) return "trunk";
+  // Gateways (MGCP, H323, SIP, analog)
+  if (m >= 1 && m <= 20) return "gateway";
+  if (m === 246 || m === 247 || m === 248 || m === 249) return "gateway";
+  // Conference bridge
+  if (m === 85 || m === 340 || m === 341) return "conference_bridge";
+  // MTP, transcoder, MOH
+  if (m === 111 || m === 112 || m === 113 || m === 334 || m === 348)
+    return "media_resource";
+  // Anything with "Trunk" in the model name
+  if (modelname && /trunk/i.test(modelname)) return "trunk";
+  if (modelname && /CTI/i.test(modelname)) return "cti";
+  if (modelname && /gateway/i.test(modelname)) return "gateway";
+  // Default: it's a phone/device
+  return "device";
+}
 
 function findClusterConfig(clusters, clusterid) {
   if (!clusters || !clusters.length || !clusterid) return null;
@@ -38,6 +65,8 @@ function mapEnrichmentToRecords(records, deviceMap) {
       enriched.orig_device_user = orig.userid;
       enriched.orig_device_pool = orig.devicepool;
       enriched.orig_device_location = orig.location;
+      enriched.orig_device_type = orig.device_type;
+      enriched.orig_device_model = orig.modelname;
     }
     const dest = deviceMap.get(r.destdevicename);
     if (dest) {
@@ -45,6 +74,8 @@ function mapEnrichmentToRecords(records, deviceMap) {
       enriched.dest_device_user = dest.userid;
       enriched.dest_device_pool = dest.devicepool;
       enriched.dest_device_location = dest.location;
+      enriched.dest_device_type = dest.device_type;
+      enriched.dest_device_model = dest.modelname;
     }
     if (orig || dest) {
       enriched.enriched_at = now;
@@ -74,6 +105,9 @@ async function lookupDevices(clusterConfig, deviceNames) {
         userid: row.userid || null,
         devicepool: row.devicepool || null,
         location: row.location || null,
+        device_type: classifyModel(row.tkmodel, row.modelname),
+        tkmodel: row.tkmodel || null,
+        modelname: row.modelname || null,
       });
     }
   }

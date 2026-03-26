@@ -66,6 +66,10 @@ ALTER TABLE cdr ADD COLUMN IF NOT EXISTS dest_device_pool text;
 ALTER TABLE cdr ADD COLUMN IF NOT EXISTS dest_device_location text;
 ALTER TABLE cdr ADD COLUMN IF NOT EXISTS calling_party_user text;
 ALTER TABLE cdr ADD COLUMN IF NOT EXISTS called_party_user text;
+ALTER TABLE cdr ADD COLUMN IF NOT EXISTS orig_device_type text;
+ALTER TABLE cdr ADD COLUMN IF NOT EXISTS orig_device_model text;
+ALTER TABLE cdr ADD COLUMN IF NOT EXISTS dest_device_type text;
+ALTER TABLE cdr ADD COLUMN IF NOT EXISTS dest_device_model text;
 ALTER TABLE cdr ADD COLUMN IF NOT EXISTS route_pattern_matched text;
 ALTER TABLE cdr ADD COLUMN IF NOT EXISTS enriched_at timestamp;
 
