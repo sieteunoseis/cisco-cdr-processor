@@ -1,17 +1,20 @@
 const express = require("express");
 const { selectLogFiles, getOneFile } = require("cisco-dime");
 
-// Cisco DIME expects dates as "MM/DD/YY HH:MM AM/PM"
+// Cisco DIME expects dates as "MM/DD/YY HH:MM AM/PM" in the target timezone
+// Convert UTC Date to formatted string in America/Los_Angeles
 function toCiscoDate(date) {
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  const year = String(date.getFullYear()).slice(-2);
-  let hours = date.getHours();
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  const ampm = hours >= 12 ? "PM" : "AM";
-  if (hours === 0) hours = 12;
-  else if (hours > 12) hours -= 12;
-  return `${month}/${day}/${year} ${String(hours).padStart(2, "0")}:${minutes} ${ampm}`;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    month: "2-digit",
+    day: "2-digit",
+    year: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  }).formatToParts(date);
+  const get = (type) => parts.find((p) => p.type === type)?.value || "";
+  return `${get("month")}/${get("day")}/${get("year")} ${get("hour")}:${get("minute")} ${get("dayPeriod")}`;
 }
 
 const CISCO_TZ = "Client: (GMT-7:0)America/Los_Angeles";
