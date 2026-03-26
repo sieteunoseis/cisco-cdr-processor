@@ -69,14 +69,13 @@ function createCdrRouter(pool) {
         return res.json({ count: 0, results: [] });
       }
 
-      // Collect direct party numbers only (not queue/trunk numbers that match too broadly)
-      const numbers = new Set();
+      // Use the calling party number as the primary match — this is the actual caller
+      // whose call journey we're tracing through the system
+      const callers = new Set();
       let minTime = null;
       let maxTime = null;
       for (const row of source.rows) {
-        // Only use the calling party and final called — these identify the actual parties
-        if (row.callingpartynumber) numbers.add(row.callingpartynumber);
-        if (row.finalcalledpartynumber) numbers.add(row.finalcalledpartynumber);
+        if (row.callingpartynumber) callers.add(row.callingpartynumber);
         const orig = new Date(row.datetimeorigination).getTime();
         const disc = row.datetimedisconnect
           ? new Date(row.datetimedisconnect).getTime()
@@ -86,7 +85,7 @@ function createCdrRouter(pool) {
       }
 
       // Remove BIB/recording numbers, CTI route points, and very short numbers
-      const filtered = [...numbers].filter(
+      const filtered = [...callers].filter(
         (n) => n.length >= 4 && !/^b\d{5,}/.test(n) && !/^777777/.test(n),
       );
 
@@ -94,14 +93,14 @@ function createCdrRouter(pool) {
         return res.json({ count: 0, results: [] });
       }
 
-      // Search 5 min window around the call
-      const windowStart = new Date(minTime - 300000).toISOString();
-      const windowEnd = new Date(maxTime + 300000).toISOString();
+      // Search 2 min window around the call
+      const windowStart = new Date(minTime - 120000).toISOString();
+      const windowEnd = new Date(maxTime + 120000).toISOString();
 
-      // Build OR conditions for each number across multiple fields
+      // Match on callingpartynumber only — traces the same caller through the system
       const numConditions = filtered.map((_, i) => {
         const p = i + 3; // $1=start, $2=end, then numbers
-        return `(c.callingpartynumber = $${p} OR c.finalcalledpartynumber = $${p} OR c.originalcalledpartynumber = $${p} OR c.lastredirectdn = $${p})`;
+        return `c.callingpartynumber = $${p}`;
       });
 
       const sql = `
