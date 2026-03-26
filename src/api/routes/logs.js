@@ -1,6 +1,20 @@
 const express = require("express");
 const { selectLogFiles, getOneFile } = require("cisco-dime");
-const { toCiscoDate, toCiscoTimezone } = require("cisco-dime/cli/utils/time");
+
+// Cisco DIME expects dates as "MM/DD/YY HH:MM AM/PM"
+function toCiscoDate(date) {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const year = String(date.getFullYear()).slice(-2);
+  let hours = date.getHours();
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const ampm = hours >= 12 ? "PM" : "AM";
+  if (hours === 0) hours = 12;
+  else if (hours > 12) hours -= 12;
+  return `${month}/${day}/${year} ${String(hours).padStart(2, "0")}:${minutes} ${ampm}`;
+}
+
+const CISCO_TZ = "Client: (GMT-7:0)America/Los_Angeles";
 const axlService = require("cisco-axl");
 const { parseSdlTrace } = require("../../parser/sdl-parser");
 const config = require("../../config");
@@ -122,7 +136,7 @@ function createLogsRouter(pool) {
       const dimeHost = await resolveNodeHost(clusterConfig, ctx.callManagerId);
       const fromCisco = toCiscoDate(new Date(ctx.fromDate));
       const toCisco = toCiscoDate(new Date(ctx.toDate));
-      const tzCisco = toCiscoTimezone("America/Los_Angeles");
+      const tzCisco = CISCO_TZ;
       console.log(
         `DIME collect: host=${dimeHost} cm=${ctx.callManagerId} from=${fromCisco} to=${toCisco}`,
       );
@@ -183,7 +197,7 @@ function createLogsRouter(pool) {
       const dimeHost = await resolveNodeHost(clusterConfig, ctx.callManagerId);
       const fromCisco = toCiscoDate(new Date(ctx.fromDate));
       const toCisco = toCiscoDate(new Date(ctx.toDate));
-      const tzCisco = toCiscoTimezone("America/Los_Angeles");
+      const tzCisco = CISCO_TZ;
       console.log(
         `DIME sip-ladder: host=${dimeHost} cm=${ctx.callManagerId} from=${fromCisco} to=${toCisco} numbers=${ctx.numbers.join(",")}`,
       );
