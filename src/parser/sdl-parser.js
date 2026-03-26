@@ -121,10 +121,9 @@ function finishMessage(msg, sipLines, messages, filterNumbers) {
   msg.via = extractHeader(sipContent, "Via");
   msg.raw = sipContent;
 
-  // Filter by numbers if provided
+  // Filter by numbers if provided — search entire raw SIP content
   if (filterNumbers && filterNumbers.length > 0) {
-    const searchStr = `${msg.from || ""} ${msg.to || ""} ${msg.requestLine || ""} ${msg.callId || ""}`;
-    const matches = filterNumbers.some((num) => searchStr.includes(num));
+    const matches = filterNumbers.some((num) => sipContent.includes(num));
     if (!matches) return;
   }
 
