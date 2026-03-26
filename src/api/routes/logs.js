@@ -1,5 +1,6 @@
 const express = require("express");
 const { selectLogFiles, getOneFile } = require("cisco-dime");
+const axlService = require("cisco-axl");
 const { parseSdlTrace } = require("../../parser/sdl-parser");
 const config = require("../../config");
 const zlib = require("zlib");
@@ -11,6 +12,43 @@ function findClusterConfig(clusterId) {
   return config.axl.clusters.find((c) => c.clusterId === clusterId) || null;
 }
 
+// Cache processnode list per cluster (nodeid -> hostname)
+const nodeCache = new Map();
+
+async function resolveNodeHost(clusterConfig, callManagerId) {
+  if (!callManagerId) return clusterConfig.host;
+
+  const cacheKey = clusterConfig.clusterId;
+  if (!nodeCache.has(cacheKey)) {
+    try {
+      const service = new axlService(
+        clusterConfig.host,
+        clusterConfig.username,
+        clusterConfig.password,
+        clusterConfig.version,
+      );
+      const response = await service.executeSqlQuery(
+        "SELECT name, nodeid FROM processnode WHERE name NOT LIKE '%Enterprise%'",
+      );
+      const rows = Array.isArray(response) ? response : response?.row || [];
+      const map = new Map();
+      for (const row of rows) {
+        map.set(String(row.nodeid), row.name);
+      }
+      nodeCache.set(cacheKey, map);
+      console.log(
+        `DIME node cache: ${map.size} nodes for cluster "${cacheKey}"`,
+      );
+    } catch (err) {
+      console.warn("Failed to resolve cluster nodes:", err.message);
+      return clusterConfig.host;
+    }
+  }
+
+  const nodes = nodeCache.get(cacheKey);
+  return nodes?.get(String(callManagerId)) || clusterConfig.host;
+}
+
 async function lookupCallContext(pool, callId, callManagerId) {
   const conditions = ["globalcallid_callid = $1"];
   const values = [callId];
@@ -20,7 +58,8 @@ async function lookupCallContext(pool, callId, callManagerId) {
   }
 
   const result = await pool.query(
-    `SELECT globalcallid_clusterid, callingpartynumber, finalcalledpartynumber,
+    `SELECT globalcallid_clusterid, globalcallid_callmanagerid,
+            callingpartynumber, finalcalledpartynumber,
             originalcalledpartynumber, datetimeorigination, datetimedisconnect
      FROM cdr WHERE ${conditions.join(" AND ")}
      ORDER BY datetimeorigination ASC`,
@@ -38,7 +77,6 @@ async function lookupCallContext(pool, callId, callManagerId) {
 
   if (!origTimes.length || !discTimes.length) return null;
 
-  // Collect phone numbers for SIP message filtering
   const numbers = new Set();
   for (const row of result.rows) {
     if (row.callingpartynumber) numbers.add(row.callingpartynumber);
@@ -49,6 +87,7 @@ async function lookupCallContext(pool, callId, callManagerId) {
 
   return {
     clusterId: result.rows[0].globalcallid_clusterid,
+    callManagerId: result.rows[0].globalcallid_callmanagerid,
     fromDate: new Date(Math.min(...origTimes) - 30000).toISOString(),
     toDate: new Date(Math.max(...discTimes) + 30000).toISOString(),
     numbers: [...numbers].filter((n) => n.length >= 4 && !/^777777/.test(n)),
@@ -78,8 +117,11 @@ function createLogsRouter(pool) {
         });
       }
 
+      // Resolve the specific CUCM node that handled this call
+      const dimeHost = await resolveNodeHost(clusterConfig, ctx.callManagerId);
+
       const logs = await selectLogFiles(
-        clusterConfig.host,
+        dimeHost,
         clusterConfig.username,
         clusterConfig.password,
         "Cisco CallManager",
@@ -90,7 +132,7 @@ function createLogsRouter(pool) {
 
       res.json({
         cluster: ctx.clusterId,
-        host: clusterConfig.host,
+        host: dimeHost,
         timeWindow: { from: ctx.fromDate, to: ctx.toDate },
         files: logs.map((f) => ({
           name: f.name,
@@ -108,7 +150,6 @@ function createLogsRouter(pool) {
   });
 
   // POST /api/v1/cdr/logs/sip-ladder
-  // Downloads SDL files for a call, parses SIP messages, returns ladder data
   router.post("/sip-ladder", async (req, res) => {
     const { callId, callManagerId } = req.body;
     if (!callId) {
@@ -128,9 +169,11 @@ function createLogsRouter(pool) {
         });
       }
 
-      // Select SDL files in the time window
+      // Resolve the specific CUCM node
+      const dimeHost = await resolveNodeHost(clusterConfig, ctx.callManagerId);
+
       const logs = await selectLogFiles(
-        clusterConfig.host,
+        dimeHost,
         clusterConfig.username,
         clusterConfig.password,
         "Cisco CallManager",
@@ -156,7 +199,6 @@ function createLogsRouter(pool) {
             file.absolutepath,
           );
 
-          // Decompress if gzipped
           let content;
           if (file.absolutepath.endsWith(".gz")) {
             content = zlib.gunzipSync(result.data).toString("utf8");
@@ -171,10 +213,8 @@ function createLogsRouter(pool) {
         }
       }
 
-      // Sort by timestamp and deduplicate by removing raw content for response
       allMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 
-      // Group by Call-ID to identify distinct SIP dialogs
       const callIds = [
         ...new Set(allMessages.map((m) => m.callId).filter(Boolean)),
       ];
@@ -202,6 +242,7 @@ function createLogsRouter(pool) {
         callIds,
         files_searched: filesToProcess.length,
         timeWindow: { from: ctx.fromDate, to: ctx.toDate },
+        node: dimeHost,
       });
     } catch (err) {
       console.error("SIP ladder failed:", err.message);
