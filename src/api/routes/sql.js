@@ -76,6 +76,29 @@ function createSqlRouter(pool) {
     }
   });
 
+  // Schema endpoint for autocomplete
+  router.get("/schema", async (req, res) => {
+    try {
+      const result = await pool.query(
+        `SELECT table_name, column_name, data_type
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+         ORDER BY table_name, ordinal_position`,
+      );
+      const tables = {};
+      for (const row of result.rows) {
+        if (!tables[row.table_name]) tables[row.table_name] = [];
+        tables[row.table_name].push({
+          name: row.column_name,
+          type: row.data_type,
+        });
+      }
+      res.json({ tables });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   return router;
 }
 
