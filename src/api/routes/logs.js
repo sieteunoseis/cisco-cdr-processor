@@ -46,12 +46,12 @@ async function resolveNodeHost(clusterConfig, callManagerId) {
         clusterConfig.version,
       );
       const response = await service.executeSqlQuery(
-        "SELECT name, nodeid FROM processnode WHERE name NOT LIKE '%Enterprise%'",
+        "SELECT pn.name, cm.ctiid FROM callmanager cm JOIN processnode pn ON cm.fkprocessnode = pn.pkid",
       );
       const rows = Array.isArray(response) ? response : response?.row || [];
       const map = new Map();
       for (const row of rows) {
-        map.set(String(row.nodeid), row.name);
+        map.set(String(row.ctiid), row.name);
       }
       nodeCache.set(cacheKey, map);
       console.log(
@@ -219,8 +219,8 @@ function createLogsRouter(pool) {
         return res.json({ messages: [], count: 0, files_searched: 0 });
       }
 
-      // Download and parse each file (limit to 5 files to avoid timeouts)
-      const filesToProcess = logs.slice(0, 5);
+      // Process all files in the time window (already scoped to ~2min)
+      const filesToProcess = logs;
       const allMessages = [];
 
       for (const file of filesToProcess) {

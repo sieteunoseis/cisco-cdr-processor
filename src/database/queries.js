@@ -191,7 +191,7 @@ async function traceCdr(pool, callId, callManagerId) {
     if (origTimes.length && discTimes.length) {
       const traceStart = new Date(Math.min(...origTimes) - 30000).toISOString();
       const traceEnd = new Date(Math.max(...discTimes) + 30000).toISOString();
-      sdlTraceCommand = `cisco-dime select "Cisco CallManager" --start "${traceStart}" --end "${traceEnd}" --download --decompress`;
+      sdlTraceCommand = `cisco-dime select "Cisco CallManager" --from "${traceStart}" --to "${traceEnd}" --download --decompress --all-nodes --insecure`;
     }
   }
 
