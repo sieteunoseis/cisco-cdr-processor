@@ -57,15 +57,128 @@ function extractErrorMessage(err) {
   return JSON.stringify(err);
 }
 
+// Map a raw RISPort device item to our API response shape
+function formatDevice(device) {
+  const ip =
+    device.IpAddress?.item?.IP ||
+    device.IpAddress?.item?.[0]?.IP ||
+    device.IpAddress ||
+    null;
+  const model = parseInt(device.Model, 10) || 0;
+  const webCapable = WEB_CAPABLE_MODELS.has(model) || model > 600;
+  return {
+    found: true,
+    deviceName: device.Name,
+    ip,
+    status: device.Status,
+    statusReason: device.StatusReason,
+    statusReasonText: device.StatusReasonText,
+    model: device.Model,
+    protocol: device.Protocol,
+    activeLoadId: device.ActiveLoadID,
+    dirNumber: device.DirNumber,
+    description: device.Description,
+    webCapable,
+    webPages: webCapable
+      ? Object.fromEntries(
+          Object.entries(PHONE_PAGES).map(([k]) => [
+            k,
+            `/api/v1/device/${device.Name}/web/${k}`,
+          ]),
+        )
+      : null,
+  };
+}
+
+// Extract all devices from RISPort nested response
+function extractDevices(risResult) {
+  const devices = [];
+  for (const node of risResult.results || []) {
+    const items = node?.CmDevices?.item;
+    if (!items) continue;
+    const list = Array.isArray(items) ? items : [items];
+    devices.push(...list.filter((d) => d.Name));
+  }
+  return devices;
+}
+
 function createDeviceRouter() {
   const router = express.Router();
 
-  // Get device registration info from RISPort
+  // Batch lookup — single RISPort call for multiple devices
+  router.post("/batch", async (req, res) => {
+    const { devices: deviceNames, cluster: clusterId } = req.body || {};
+    if (!Array.isArray(deviceNames) || deviceNames.length === 0) {
+      return res.status(400).json({ error: "devices array required" });
+    }
+
+    // Check cache for all, collect uncached
+    const results = {};
+    const uncached = [];
+    for (const name of deviceNames) {
+      const cached = getCached(`${name}:${clusterId || ""}`);
+      if (cached) {
+        results[name] = cached;
+      } else {
+        uncached.push(name);
+      }
+    }
+
+    // All cached — return immediately
+    if (uncached.length === 0) {
+      return res.json({ devices: results });
+    }
+
+    const cluster = getClusterForDevice(clusterId);
+    if (!cluster) {
+      return res.status(400).json({ error: "No AXL cluster configured" });
+    }
+
+    try {
+      const service = new RisPortService(
+        cluster.host,
+        cluster.username,
+        cluster.password,
+      );
+
+      // Single RISPort call with array of device names
+      const risResult = await service.selectCmDevice({
+        action: "SelectCmDeviceExt",
+        maxReturned: 100,
+        deviceClass: "Any",
+        selectBy: "Name",
+        selectItems: uncached,
+        status: "Any",
+      });
+
+      const found = extractDevices(risResult);
+
+      for (const name of uncached) {
+        const device = found.find(
+          (d) => d.Name.toUpperCase() === name.toUpperCase(),
+        );
+        if (device) {
+          const formatted = formatDevice(device);
+          setCache(`${name}:${clusterId || ""}`, formatted);
+          results[name] = formatted;
+        } else {
+          results[name] = { found: false, deviceName: name };
+        }
+      }
+
+      res.json({ devices: results });
+    } catch (err) {
+      const msg = extractErrorMessage(err);
+      console.error(`RISPort batch query failed:`, msg);
+      res.status(502).json({ error: `RISPort query failed: ${msg}` });
+    }
+  });
+
+  // Single device lookup
   router.get("/:deviceName", async (req, res) => {
     const { deviceName } = req.params;
     const clusterId = req.query.cluster || "";
 
-    // Check cache first
     const cacheKey = `${deviceName}:${clusterId}`;
     const cached = getCached(cacheKey);
     if (cached) return res.json(cached);
@@ -82,7 +195,7 @@ function createDeviceRouter() {
         cluster.password,
       );
 
-      const result = await service.selectCmDevice({
+      const risResult = await service.selectCmDevice({
         action: "SelectCmDeviceExt",
         maxReturned: 10,
         deviceClass: "Any",
@@ -91,66 +204,18 @@ function createDeviceRouter() {
         status: "Any",
       });
 
-      // Extract device from nested response
-      let device = null;
-      for (const node of result.results || []) {
-        const items = node?.CmDevices?.item;
-        if (!items) continue;
-        const list = Array.isArray(items) ? items : [items];
-        for (const item of list) {
-          if (
-            item.Name &&
-            item.Name.toUpperCase() === deviceName.toUpperCase()
-          ) {
-            device = item;
-            break;
-          }
-        }
-        if (device) break;
-      }
+      const found = extractDevices(risResult);
+      const device = found.find(
+        (d) => d.Name.toUpperCase() === deviceName.toUpperCase(),
+      );
 
       if (!device) {
-        return res.json({
-          found: false,
-          deviceName,
-          message: "Device not found in RISPort",
-        });
+        return res.json({ found: false, deviceName });
       }
 
-      // Normalize IP
-      const ip =
-        device.IpAddress?.item?.IP ||
-        device.IpAddress?.item?.[0]?.IP ||
-        device.IpAddress ||
-        null;
-
-      const model = parseInt(device.Model, 10) || 0;
-      const webCapable = WEB_CAPABLE_MODELS.has(model) || model > 600;
-
-      const result = {
-        found: true,
-        deviceName: device.Name,
-        ip,
-        status: device.Status,
-        statusReason: device.StatusReason,
-        statusReasonText: device.StatusReasonText,
-        model: device.Model,
-        protocol: device.Protocol,
-        activeLoadId: device.ActiveLoadID,
-        dirNumber: device.DirNumber,
-        description: device.Description,
-        webCapable,
-        webPages: webCapable
-          ? Object.fromEntries(
-              Object.entries(PHONE_PAGES).map(([k, v]) => [
-                k,
-                `/api/v1/device/${deviceName}/web/${k}`,
-              ]),
-            )
-          : null,
-      };
-      setCache(cacheKey, result);
-      res.json(result);
+      const formatted = formatDevice(device);
+      setCache(cacheKey, formatted);
+      res.json(formatted);
     } catch (err) {
       const msg = extractErrorMessage(err);
       console.error(`RISPort query failed for ${deviceName}:`, msg);
