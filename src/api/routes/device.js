@@ -174,6 +174,34 @@ function formatDevice(device) {
   };
 }
 
+// Extract key-value pairs from phone HTML pages
+function parsePhonePage(page, html) {
+  const pairs = [];
+  // Match <td>Label</td><td>Value</td> patterns
+  const tdRegex = /<td[^>]*>\s*(.*?)\s*<\/td>\s*<td[^>]*>\s*(.*?)\s*<\/td>/gi;
+  let match;
+  while ((match = tdRegex.exec(html)) !== null) {
+    const key = match[1].replace(/<[^>]+>/g, "").trim();
+    const val = match[2].replace(/<[^>]+>/g, "").trim();
+    if (key && val && key !== val) {
+      pairs.push({ key, val });
+    }
+  }
+
+  // Extract CDP neighbor info specifically for network page
+  if (page === "network") {
+    const cdpSection = [];
+    const cdpRegex =
+      /Neighbor\s*(?:Device\s*ID|Port\s*ID|IP\s*Address|Capabilities|Platform)[^<]*<\/td>\s*<td[^>]*>\s*(.*?)\s*<\/td>/gi;
+    while ((match = cdpRegex.exec(html)) !== null) {
+      cdpSection.push(match[1].replace(/<[^>]+>/g, "").trim());
+    }
+    return { data: pairs, cdp: cdpSection.length > 0 ? cdpSection : null };
+  }
+
+  return { data: pairs };
+}
+
 function createDeviceRouter() {
   const router = express.Router();
 
@@ -260,43 +288,60 @@ function createDeviceRouter() {
     }
   });
 
-  // Proxy phone web page
+  // Fetch phone logs or web page content via IP
+  // Supports: /FS/messages, /FS/messages.0, and PHONE_PAGES keys
   router.get("/:deviceName/web/:page", async (req, res) => {
     const { deviceName, page } = req.params;
-    const pagePath = PHONE_PAGES[page];
-    if (!pagePath) {
+    const clusterId = req.query.cluster || "";
+
+    // Resolve IP from cache or RISPort
+    const cacheKey = `${deviceName}:${clusterId}`;
+    let ip = getCached(cacheKey)?.ip;
+
+    if (!ip) {
+      const cluster = getClusterForDevice(clusterId);
+      if (!cluster) {
+        return res.status(400).json({ error: "No AXL cluster configured" });
+      }
+      try {
+        const found = await queryRisPort(cluster, deviceName);
+        const device = found.find(
+          (d) => d.Name.toUpperCase() === deviceName.toUpperCase(),
+        );
+        ip =
+          device?.IPAddress?.item?.IP ||
+          device?.IPAddress?.item?.[0]?.IP ||
+          null;
+      } catch (err) {
+        return res
+          .status(502)
+          .json({ error: `RISPort failed: ${err.message}` });
+      }
+    }
+
+    if (!ip) {
+      return res
+        .status(404)
+        .json({ error: "Device not registered or IP not found" });
+    }
+
+    // Determine URL path
+    let urlPath;
+    if (PHONE_PAGES[page]) {
+      urlPath = PHONE_PAGES[page];
+    } else if (page === "messages") {
+      urlPath = "/FS/messages";
+    } else if (/^messages\.\d+$/.test(page)) {
+      urlPath = `/FS/${page}`;
+    } else {
       return res.status(400).json({ error: `Unknown page: ${page}` });
     }
 
-    const clusterId = req.query.cluster || "";
-    const cluster = getClusterForDevice(clusterId);
-    if (!cluster) {
-      return res.status(400).json({ error: "No AXL cluster configured" });
-    }
-
     try {
-      const found = await queryRisPort(cluster, deviceName);
-      const device = found.find(
-        (d) => d.Name.toUpperCase() === deviceName.toUpperCase(),
-      );
-
-      const ip =
-        device?.IPAddress?.item?.IP ||
-        device?.IPAddress?.item?.[0]?.IP ||
-        device?.IpAddress?.item?.IP ||
-        device?.IPAddress ||
-        null;
-
-      if (!ip) {
-        return res
-          .status(404)
-          .json({ error: "Device not registered or IP not found" });
-      }
-
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 10000);
 
-      const response = await fetch(`http://${ip}${pagePath}`, {
+      const response = await fetch(`http://${ip}${urlPath}`, {
         signal: controller.signal,
       });
       clearTimeout(timeout);
@@ -307,15 +352,24 @@ function createDeviceRouter() {
           .json({ error: `Phone returned ${response.status}` });
       }
 
-      const html = await response.text();
-      res.json({ deviceName, ip, page, html });
+      const text = await response.text();
+
+      // For HTML pages, extract just the table/body content
+      if (PHONE_PAGES[page]) {
+        // Parse useful data from HTML
+        const data = parsePhonePage(page, text);
+        return res.json({ deviceName, ip, page, ...data });
+      }
+
+      // For log files, return raw text
+      res.json({ deviceName, ip, page, text });
     } catch (err) {
       if (err.name === "AbortError") {
         return res
           .status(504)
           .json({ error: "Phone web server timed out (10s)" });
       }
-      console.error(`Phone web fetch failed for ${deviceName}:`, err.message);
+      console.error(`Phone fetch failed for ${deviceName}:`, err.message);
       res.status(502).json({ error: err.message });
     }
   });
