@@ -49,8 +49,18 @@ function setCache(key, data) {
 }
 
 function extractErrorMessage(err) {
-  if (err.message && err.message !== "unknown") return err.message;
-  if (err.faultstring) return err.faultstring;
+  const parts = [];
+  if (
+    err.message &&
+    err.message !== "unknown" &&
+    err.message !== "Unknown SOAP fault"
+  ) {
+    parts.push(err.message);
+  }
+  if (err.status) parts.push(`HTTP ${err.status}`);
+  if (err.code && err.code !== err.message) parts.push(err.code);
+  if (parts.length > 0) return parts.join(" — ");
+  if (err.faultstring) return String(err.faultstring);
   if (typeof err === "string") return err;
   const str = String(err);
   if (str !== "[object Object]") return str;
