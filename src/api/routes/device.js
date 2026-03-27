@@ -30,6 +30,33 @@ function getClusterForDevice(clusterId) {
   );
 }
 
+// Cache RISPort results for 2 minutes to avoid rate limits (15 req/min)
+const risCache = new Map();
+const RIS_CACHE_TTL = 120000;
+
+function getCached(key) {
+  const entry = risCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > RIS_CACHE_TTL) {
+    risCache.delete(key);
+    return null;
+  }
+  return entry.data;
+}
+
+function setCache(key, data) {
+  risCache.set(key, { data, ts: Date.now() });
+}
+
+function extractErrorMessage(err) {
+  if (err.message && err.message !== "unknown") return err.message;
+  if (err.faultstring) return err.faultstring;
+  if (typeof err === "string") return err;
+  const str = String(err);
+  if (str !== "[object Object]") return str;
+  return JSON.stringify(err);
+}
+
 function createDeviceRouter() {
   const router = express.Router();
 
@@ -37,6 +64,11 @@ function createDeviceRouter() {
   router.get("/:deviceName", async (req, res) => {
     const { deviceName } = req.params;
     const clusterId = req.query.cluster || "";
+
+    // Check cache first
+    const cacheKey = `${deviceName}:${clusterId}`;
+    const cached = getCached(cacheKey);
+    if (cached) return res.json(cached);
 
     const cluster = getClusterForDevice(clusterId);
     if (!cluster) {
@@ -95,7 +127,7 @@ function createDeviceRouter() {
       const model = parseInt(device.Model, 10) || 0;
       const webCapable = WEB_CAPABLE_MODELS.has(model) || model > 600;
 
-      res.json({
+      const result = {
         found: true,
         deviceName: device.Name,
         ip,
@@ -116,10 +148,13 @@ function createDeviceRouter() {
               ]),
             )
           : null,
-      });
+      };
+      setCache(cacheKey, result);
+      res.json(result);
     } catch (err) {
-      console.error(`RISPort query failed for ${deviceName}:`, err.message);
-      res.status(502).json({ error: `RISPort query failed: ${err.message}` });
+      const msg = extractErrorMessage(err);
+      console.error(`RISPort query failed for ${deviceName}:`, msg);
+      res.status(502).json({ error: `RISPort query failed: ${msg}` });
     }
   });
 
