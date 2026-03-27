@@ -2,6 +2,10 @@ const cron = require("node-cron");
 const { clearExpired } = require("./enrichment/cache");
 
 function startRetentionJob(pool, retentionDays) {
+  if (!retentionDays || retentionDays <= 0) {
+    console.log("Retention: disabled (CDR_RETENTION_DAYS=0)");
+    return;
+  }
   cron.schedule("0 2 * * *", async () => {
     console.log(
       `Retention: purging records older than ${retentionDays} days...`,
