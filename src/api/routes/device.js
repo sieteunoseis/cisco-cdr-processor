@@ -174,29 +174,33 @@ function formatDevice(device) {
   };
 }
 
-// Extract key-value pairs from phone HTML pages
+// Extract key-value pairs from Cisco phone HTML pages
+// Phones use: <TD><B>Label</B></TD><td width=20></TD><TD><B>Value</B></TD>
+// Or: <TD>Label</TD><TD>Value</TD>
 function parsePhonePage(page, html) {
   const pairs = [];
-  // Match <td>Label</td><td>Value</td> patterns
-  const tdRegex = /<td[^>]*>\s*(.*?)\s*<\/td>\s*<td[^>]*>\s*(.*?)\s*<\/td>/gi;
+  // Match 3-cell rows: <TD>key</TD><td spacer></td><TD>value</TD>
+  const threeCell =
+    /<td[^>]*>\s*<b>\s*(.*?)\s*<\/b>\s*<\/td>\s*<td[^>]*>\s*<\/td>\s*<td[^>]*>\s*<b>\s*(.*?)\s*<\/b>\s*<\/td>/gi;
   let match;
-  while ((match = tdRegex.exec(html)) !== null) {
+  while ((match = threeCell.exec(html)) !== null) {
     const key = match[1].replace(/<[^>]+>/g, "").trim();
     const val = match[2].replace(/<[^>]+>/g, "").trim();
-    if (key && val && key !== val) {
+    if (key && val) {
       pairs.push({ key, val });
     }
   }
 
-  // Extract CDP neighbor info specifically for network page
-  if (page === "network") {
-    const cdpSection = [];
-    const cdpRegex =
-      /Neighbor\s*(?:Device\s*ID|Port\s*ID|IP\s*Address|Capabilities|Platform)[^<]*<\/td>\s*<td[^>]*>\s*(.*?)\s*<\/td>/gi;
-    while ((match = cdpRegex.exec(html)) !== null) {
-      cdpSection.push(match[1].replace(/<[^>]+>/g, "").trim());
+  // Also try 2-cell rows: <TD>key</TD><TD>value</TD>
+  if (pairs.length === 0) {
+    const twoCell = /<td[^>]*>\s*(.*?)\s*<\/td>\s*<td[^>]*>\s*(.*?)\s*<\/td>/gi;
+    while ((match = twoCell.exec(html)) !== null) {
+      const key = match[1].replace(/<[^>]+>/g, "").trim();
+      const val = match[2].replace(/<[^>]+>/g, "").trim();
+      if (key && val && key !== val && !key.startsWith("http")) {
+        pairs.push({ key, val });
+      }
     }
-    return { data: pairs, cdp: cdpSection.length > 0 ? cdpSection : null };
   }
 
   return { data: pairs };
