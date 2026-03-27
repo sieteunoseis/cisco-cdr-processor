@@ -144,9 +144,10 @@ async function queryRisPort(cluster, deviceNames) {
 
 function formatDevice(device) {
   const ip =
+    device.IPAddress?.item?.IP ||
+    device.IPAddress?.item?.[0]?.IP ||
     device.IpAddress?.item?.IP ||
-    device.IpAddress?.item?.[0]?.IP ||
-    device.IpAddress ||
+    device.IPAddress ||
     null;
   const model = parseInt(device.Model, 10) || 0;
   const webCapable = WEB_CAPABLE_MODELS.has(model) || model > 600;
@@ -280,9 +281,10 @@ function createDeviceRouter() {
       );
 
       const ip =
+        device?.IPAddress?.item?.IP ||
+        device?.IPAddress?.item?.[0]?.IP ||
         device?.IpAddress?.item?.IP ||
-        device?.IpAddress?.item?.[0]?.IP ||
-        device?.IpAddress ||
+        device?.IPAddress ||
         null;
 
       if (!ip) {
