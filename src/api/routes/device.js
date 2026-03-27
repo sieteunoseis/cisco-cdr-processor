@@ -6,7 +6,7 @@ const PHONE_PAGES = {
   network: "/CGI/Java/Serviceability?adapter=device.statistics.port.network",
   config: "/CGI/Java/Serviceability?adapter=device.statistics.configuration",
   console: "/CGI/Java/Serviceability?adapter=device.statistics.consolelog",
-  status: "/CGI/Java/Serviceability?adapter=device.statistics.statusmessages",
+  status: "/CGI/Java/Serviceability?adapter=device.settings.status.messages",
 };
 
 const WEB_CAPABLE_MODELS = new Set([
