@@ -3,6 +3,8 @@ const { createCdrRouter } = require("./routes/cdr");
 const { createHealthRouter } = require("./routes/health");
 const { createSqlRouter } = require("./routes/sql");
 const { createLogsRouter } = require("./routes/logs");
+const { createStarredRouter } = require("./routes/starred");
+const { createDeviceRouter } = require("./routes/device");
 
 function createRestServer(pool) {
   const app = express();
@@ -14,7 +16,7 @@ function createRestServer(pool) {
   app.use((req, res, next) => {
     res.header("Access-Control-Allow-Origin", corsOrigin);
     res.header("Access-Control-Allow-Headers", "Content-Type");
-    res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
     if (req.method === "OPTIONS") return res.sendStatus(204);
     next();
   });
@@ -24,6 +26,8 @@ function createRestServer(pool) {
   app.use("/api/v1/cdr/sql", createSqlRouter(pool));
   app.use("/api/v1/cdr/logs", createLogsRouter(pool));
   app.use("/api/v1/health", createHealthRouter(pool));
+  app.use("/api/v1/starred", createStarredRouter(pool));
+  app.use("/api/v1/device", createDeviceRouter());
 
   // 404 fallback for unknown API routes
   app.use("/api", (req, res) => {

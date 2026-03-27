@@ -44,6 +44,12 @@ async function initSchema(pool) {
     "utf8",
   );
   await pool.query(viewsSql);
+
+  const starredSql = fs.readFileSync(
+    path.join(SQL_DIR, "Migration003_starred_calls.sql"),
+    "utf8",
+  );
+  await pool.query(starredSql);
   console.log("Migrations applied.");
 }
 

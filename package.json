@@ -17,6 +17,7 @@
     "chokidar": "^5.0.0",
     "cisco-axl": "^2.1.0",
     "cisco-dime": "^2.1.0",
+    "cisco-risport": "^3.0.0",
     "csv-parse": "^6.2.1",
     "express": "^5.2.1",
     "node-cron": "^4.2.1",
