@@ -365,7 +365,12 @@ function createDeviceRouter() {
         return res.json({ deviceName, ip, page, ...data });
       }
 
-      // For log files, return raw text
+      // For log files, return raw text (detect fake 404s from Cisco phones)
+      if (text.includes("requested URL was not found")) {
+        return res
+          .status(404)
+          .json({ error: "Log file not available on this phone" });
+      }
       res.json({ deviceName, ip, page, text });
     } catch (err) {
       if (err.name === "AbortError") {
