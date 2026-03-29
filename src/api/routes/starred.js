@@ -27,6 +27,36 @@ function createStarredRouter(pool) {
     }
   });
 
+  // Bulk check which calls are starred
+  router.post("/check", async (req, res) => {
+    try {
+      const { calls } = req.body || {};
+      if (!Array.isArray(calls) || calls.length === 0) {
+        return res.json({ starred: {} });
+      }
+      // Build query for all call IDs
+      const pairs = calls
+        .slice(0, 200)
+        .map((c) => [String(c.callId), String(c.callManagerId)]);
+      const result = await pool.query(
+        `SELECT globalcallid_callid, globalcallid_callmanagerid
+         FROM starred_calls
+         WHERE (globalcallid_callid, globalcallid_callmanagerid)
+         IN (${pairs.map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`).join(", ")})`,
+        pairs.flat(),
+      );
+      const starredMap = {};
+      for (const row of result.rows) {
+        starredMap[
+          `${row.globalcallid_callid}:${row.globalcallid_callmanagerid}`
+        ] = true;
+      }
+      res.json({ starred: starredMap });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Check if a call is starred
   router.get("/:callId/:callManagerId", async (req, res) => {
     try {
