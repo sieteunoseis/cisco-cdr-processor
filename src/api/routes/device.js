@@ -292,6 +292,47 @@ function createDeviceRouter() {
     }
   });
 
+  // List available log files on a phone
+  router.get("/:deviceName/logs", async (req, res) => {
+    const { deviceName } = req.params;
+    const clusterId = req.query.cluster || "";
+
+    const cacheKey = `${deviceName}:${clusterId}`;
+    let ip = getCached(cacheKey)?.ip;
+    if (!ip) {
+      const cluster = getClusterForDevice(clusterId);
+      if (!cluster) return res.json({ logs: [] });
+      try {
+        const found = await queryRisPort(cluster, deviceName);
+        const device = found.find(
+          (d) => d.Name.toUpperCase() === deviceName.toUpperCase(),
+        );
+        if (device) {
+          const formatted = formatDevice(device);
+          setCache(cacheKey, formatted);
+          ip = formatted.ip;
+        }
+      } catch {}
+    }
+    if (!ip) return res.json({ logs: [] });
+
+    try {
+      const response = await fetch(
+        `http://${ip}/CGI/Java/Serviceability?adapter=device.statistics.consolelog`,
+        { signal: AbortSignal.timeout(5000) },
+      );
+      const html = await response.text();
+      const logs = [];
+      const matches = html.matchAll(/href="\/FS\/(messages[^"]*?)"/g);
+      for (const m of matches) {
+        logs.push(m[1]);
+      }
+      res.json({ logs });
+    } catch {
+      res.json({ logs: ["messages"] });
+    }
+  });
+
   // Fetch phone logs or web page content via IP
   // Supports: /FS/messages, /FS/messages.0, and PHONE_PAGES keys
   router.get("/:deviceName/web/:page", async (req, res) => {
