@@ -150,7 +150,7 @@ function formatDevice(device) {
     device.IPAddress ||
     null;
   const model = parseInt(device.Model, 10) || 0;
-  const webCapable = WEB_CAPABLE_MODELS.has(model) || model > 600;
+  const webCapable = !!ip;
   return {
     found: true,
     deviceName: device.Name,
