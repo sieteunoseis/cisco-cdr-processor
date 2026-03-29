@@ -365,11 +365,18 @@ function createDeviceRouter() {
         return res.json({ deviceName, ip, page, ...data });
       }
 
-      // For log files, return raw text (detect fake 404s from Cisco phones)
+      // Cisco phones sometimes return "not found" on first request — retry once
       if (text.includes("requested URL was not found")) {
-        return res
-          .status(404)
-          .json({ error: "Log file not available on this phone" });
+        const retry = await fetch(`http://${ip}${urlPath}`, {
+          signal: AbortSignal.timeout(10000),
+        });
+        const retryText = await retry.text();
+        if (retryText.includes("requested URL was not found")) {
+          return res
+            .status(404)
+            .json({ error: "Log file not available on this phone" });
+        }
+        return res.json({ deviceName, ip, page, text: retryText });
       }
       res.json({ deviceName, ip, page, text });
     } catch (err) {
