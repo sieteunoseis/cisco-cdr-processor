@@ -17,7 +17,7 @@ function createStarredRouter(pool) {
         FROM starred_calls s
         LEFT JOIN cdr c ON c.globalcallid_callid = s.globalcallid_callid
           AND c.globalcallid_callmanagerid = s.globalcallid_callmanagerid
-        LEFT JOIN cdr_cause cc ON c.destcause_value = cc.code
+        LEFT JOIN cdr_cause cc ON c.destcause_value = cc.id
         ORDER BY s.created_at DESC
         LIMIT 100
       `);
