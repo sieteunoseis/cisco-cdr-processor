@@ -74,7 +74,9 @@ async function getAllNodes(clusterConfig) {
   // Ensure node cache is populated
   await resolveNodeHost(clusterConfig, "1");
   const nodes = nodeCache.get(clusterConfig.clusterId);
-  return nodes ? [...nodes.values()] : [clusterConfig.host];
+  if (!nodes) return [clusterConfig.host];
+  // Filter out TFTP, MOH, and publisher nodes — they don't have SDL traces
+  return [...nodes.values()].filter((n) => !/tftp|moh|pub/i.test(n));
 }
 
 async function lookupCallContext(pool, callId, callManagerId) {
