@@ -397,14 +397,7 @@ function createDeviceRouter() {
           .json({ error: `Phone returned ${response.status}` });
       }
 
-      const text = await response.text();
-
-      // For HTML pages, extract just the table/body content
-      if (PHONE_PAGES[page]) {
-        // Parse useful data from HTML
-        const data = parsePhonePage(page, text);
-        return res.json({ deviceName, ip, page, ...data });
-      }
+      let text = await response.text();
 
       // Cisco phones sometimes return "not found" on first request — retry with delay
       if (text.includes("requested URL was not found")) {
@@ -412,14 +405,21 @@ function createDeviceRouter() {
         const retry = await fetch(`http://${ip}${urlPath}`, {
           signal: AbortSignal.timeout(10000),
         });
-        const retryText = await retry.text();
-        if (retryText.includes("requested URL was not found")) {
+        text = await retry.text();
+        if (text.includes("requested URL was not found")) {
           return res
             .status(404)
             .json({ error: "Log file not available on this phone" });
         }
-        return res.json({ deviceName, ip, page, text: retryText });
       }
+
+      // For HTML pages, extract just the table/body content
+      if (PHONE_PAGES[page]) {
+        const data = parsePhonePage(page, text);
+        return res.json({ deviceName, ip, page, ...data });
+      }
+
+      // For log files, return raw text
       res.json({ deviceName, ip, page, text });
     } catch (err) {
       if (err.name === "AbortError") {
