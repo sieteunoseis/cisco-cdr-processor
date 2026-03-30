@@ -89,12 +89,12 @@ function createSnapshotsRouter(pool) {
       );
 
       if (result.rows.length === 0) {
-        return res.status(404).json({ error: "No snapshot found" });
+        return res.status(204).end();
       }
 
       const fullPath = path.join(SNAPSHOT_DIR, result.rows[0].file_path);
       if (!fs.existsSync(fullPath)) {
-        return res.status(404).json({ error: "Snapshot file missing" });
+        return res.status(204).end();
       }
 
       const content = fs.readFileSync(fullPath, "utf8");
