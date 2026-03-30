@@ -70,6 +70,13 @@ async function resolveNodeHost(clusterConfig, callManagerId) {
   return nodes?.get(String(callManagerId)) || clusterConfig.host;
 }
 
+async function getAllNodes(clusterConfig) {
+  // Ensure node cache is populated
+  await resolveNodeHost(clusterConfig, "1");
+  const nodes = nodeCache.get(clusterConfig.clusterId);
+  return nodes ? [...nodes.values()] : [clusterConfig.host];
+}
+
 async function lookupCallContext(pool, callId, callManagerId) {
   const conditions = ["globalcallid_callid = $1"];
   const values = [callId];
@@ -199,34 +206,43 @@ function createLogsRouter(pool) {
         });
       }
 
-      // Query all nodes in the cluster for complete SIP traces
-      const dimeHost = clusterConfig.host;
+      // Query all subscriber nodes for complete SIP traces
+      const allNodes = await getAllNodes(clusterConfig);
       const fromCisco = toCiscoDate(new Date(ctx.fromDate));
       const toCisco = toCiscoDate(new Date(ctx.toDate));
       const tzCisco = CISCO_TZ;
       console.log(
-        `DIME sip-ladder: host=${dimeHost} (all-nodes) cm=${ctx.callManagerId} from=${fromCisco} to=${toCisco} numbers=${ctx.numbers.join(",")}`,
+        `DIME sip-ladder: ${allNodes.length} nodes, cm=${ctx.callManagerId} from=${fromCisco} to=${toCisco} numbers=${ctx.numbers.join(",")}`,
       );
 
-      const logs = await selectLogFiles(
-        dimeHost,
-        clusterConfig.username,
-        clusterConfig.password,
-        "Cisco CallManager",
-        fromCisco,
-        toCisco,
-        tzCisco,
-      );
+      // Query each node for log files
+      let allLogs = [];
+      for (const node of allNodes) {
+        try {
+          const logs = await selectLogFiles(
+            node,
+            clusterConfig.username,
+            clusterConfig.password,
+            "Cisco CallManager",
+            fromCisco,
+            toCisco,
+            tzCisco,
+          );
+          allLogs.push(...logs);
+        } catch (err) {
+          console.warn(`DIME select failed on ${node}: ${err.message}`);
+        }
+      }
 
-      if (logs.length === 0) {
+      if (allLogs.length === 0) {
         return res.json({ messages: [], count: 0, files_searched: 0 });
       }
 
-      // Process all files in the time window (already scoped to ~2min)
-      const filesToProcess = logs;
+      // Process all files from all nodes
       const allMessages = [];
+      let filesSearched = 0;
 
-      for (const file of filesToProcess) {
+      for (const file of allLogs) {
         try {
           const result = await getOneFile(
             file.server,
@@ -244,6 +260,7 @@ function createLogsRouter(pool) {
 
           const messages = parseSdlTrace(content, ctx.numbers);
           allMessages.push(...messages);
+          filesSearched++;
         } catch (fileErr) {
           console.warn(`Failed to process ${file.name}: ${fileErr.message}`);
         }
@@ -276,9 +293,9 @@ function createLogsRouter(pool) {
         })),
         count: allMessages.length,
         callIds,
-        files_searched: filesToProcess.length,
+        files_searched: filesSearched,
         timeWindow: { from: ctx.fromDate, to: ctx.toDate },
-        node: dimeHost,
+        node: allNodes.join(","),
       };
 
       res.json(responseData);
