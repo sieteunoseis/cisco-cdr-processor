@@ -21,6 +21,7 @@ const CISCO_TZ = "Client: (GMT-7:0)America/Los_Angeles";
 const axlService = require("cisco-axl");
 const { parseSdlTrace } = require("../../parser/sdl-parser");
 const config = require("../../config");
+const dns = require("dns").promises;
 const zlib = require("zlib");
 const fs = require("fs");
 const path = require("path");
@@ -122,6 +123,21 @@ async function lookupCallContext(pool, callId, callManagerId) {
     toDate: new Date(Math.max(...discTimes) + 30000).toISOString(),
     numbers: [...numbers].filter((n) => n.length >= 4 && !/^777777/.test(n)),
   };
+}
+
+// Reverse DNS cache
+const dnsCache = new Map();
+async function reverseDns(ip) {
+  if (dnsCache.has(ip)) return dnsCache.get(ip);
+  try {
+    const hostnames = await dns.reverse(ip);
+    const hostname = hostnames[0] || null;
+    dnsCache.set(ip, hostname);
+    return hostname;
+  } catch {
+    dnsCache.set(ip, null);
+    return null;
+  }
 }
 
 // In-memory job tracker for background SIP trace downloads
@@ -240,6 +256,15 @@ function createLogsRouter(pool) {
         });
       }
 
+      // Resolve the CUCM node that handled this call
+      const cucmHost = await resolveNodeHost(clusterConfig, ctx.callManagerId);
+      // Look up the IP for the CUCM node
+      let cucmIp = null;
+      try {
+        const { address } = await dns.lookup(cucmHost);
+        cucmIp = address;
+      } catch {}
+
       const job = createJob(jobId);
       res.json({ jobId, status: "pending", progress: job.progress });
 
@@ -322,6 +347,16 @@ function createLogsRouter(pool) {
             ...new Set(allMessages.map((m) => m.callId).filter(Boolean)),
           ];
 
+          // Reverse DNS lookup for unique remote IPs
+          const uniqueIps = [...new Set(allMessages.map((m) => m.remoteIp))];
+          const ipDns = {};
+          await Promise.all(
+            uniqueIps.map(async (ip) => {
+              const hostname = await reverseDns(ip);
+              if (hostname) ipDns[ip] = hostname;
+            }),
+          );
+
           const responseData = {
             messages: allMessages.map((m) => ({
               timestamp: m.timestamp,
@@ -346,6 +381,8 @@ function createLogsRouter(pool) {
             files_searched: filesSearched,
             timeWindow: { from: ctx.fromDate, to: ctx.toDate },
             node: allNodes.join(","),
+            cucmNode: { hostname: cucmHost, ip: cucmIp },
+            ipDns,
           };
 
           job.status = "complete";
