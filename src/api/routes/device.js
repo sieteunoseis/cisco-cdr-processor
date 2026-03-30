@@ -406,8 +406,9 @@ function createDeviceRouter() {
         return res.json({ deviceName, ip, page, ...data });
       }
 
-      // Cisco phones sometimes return "not found" on first request — retry once
+      // Cisco phones sometimes return "not found" on first request — retry with delay
       if (text.includes("requested URL was not found")) {
+        await new Promise((r) => setTimeout(r, 1500));
         const retry = await fetch(`http://${ip}${urlPath}`, {
           signal: AbortSignal.timeout(10000),
         });
