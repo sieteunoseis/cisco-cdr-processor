@@ -416,14 +416,17 @@ function createDeviceRouter() {
 
       let text = await response.text();
 
-      // Cisco phones sometimes return "not found" on first request — retry with delay
-      if (text.includes("requested URL was not found")) {
+      // Cisco phones sometimes return a short "not found" body on first request — retry
+      // Only check first 200 chars to avoid false positives from syslog content
+      const isFake404 = (t) =>
+        t.length < 500 && t.includes("requested URL was not found");
+      if (isFake404(text)) {
         await new Promise((r) => setTimeout(r, 1500));
         const retry = await fetch(`http://${ip}${urlPath}`, {
           signal: AbortSignal.timeout(10000),
         });
         text = await retry.text();
-        if (text.includes("requested URL was not found")) {
+        if (isFake404(text)) {
           return res
             .status(404)
             .json({ error: "Log file not available on this phone" });
