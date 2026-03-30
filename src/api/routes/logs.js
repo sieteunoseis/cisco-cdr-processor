@@ -199,13 +199,13 @@ function createLogsRouter(pool) {
         });
       }
 
-      // Resolve the specific CUCM node
-      const dimeHost = await resolveNodeHost(clusterConfig, ctx.callManagerId);
+      // Query all nodes in the cluster for complete SIP traces
+      const dimeHost = clusterConfig.host;
       const fromCisco = toCiscoDate(new Date(ctx.fromDate));
       const toCisco = toCiscoDate(new Date(ctx.toDate));
       const tzCisco = CISCO_TZ;
       console.log(
-        `DIME sip-ladder: host=${dimeHost} cm=${ctx.callManagerId} from=${fromCisco} to=${toCisco} numbers=${ctx.numbers.join(",")}`,
+        `DIME sip-ladder: host=${dimeHost} (all-nodes) cm=${ctx.callManagerId} from=${fromCisco} to=${toCisco} numbers=${ctx.numbers.join(",")}`,
       );
 
       const logs = await selectLogFiles(
