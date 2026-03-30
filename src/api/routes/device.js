@@ -150,7 +150,11 @@ function formatDevice(device) {
     device.IPAddress ||
     null;
   const model = parseInt(device.Model, 10) || 0;
-  const webCapable = !!ip;
+  const firmware = device.ActiveLoadID || "";
+  const webCapable =
+    !!ip &&
+    typeof firmware === "string" &&
+    (firmware.startsWith("sip") || firmware.startsWith("SCCP"));
   return {
     found: true,
     deviceName: device.Name,
@@ -159,7 +163,8 @@ function formatDevice(device) {
     statusReason: device.StatusReason,
     model: device.Model,
     protocol: device.Protocol,
-    activeLoadId: device.ActiveLoadID,
+    activeLoadId:
+      typeof device.ActiveLoadID === "string" ? device.ActiveLoadID : null,
     dirNumber: device.DirNumber,
     description: device.Description,
     webCapable,
