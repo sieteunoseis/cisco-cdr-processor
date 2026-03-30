@@ -124,6 +124,24 @@ async function lookupCallContext(pool, callId, callManagerId) {
   };
 }
 
+// In-memory job tracker for background SIP trace downloads
+const jobs = new Map();
+
+function createJob(id) {
+  const job = {
+    id,
+    status: "pending", // pending | downloading | parsing | complete | error
+    progress: { filesTotal: 0, filesDownloaded: 0, node: "" },
+    result: null,
+    error: null,
+    startedAt: Date.now(),
+  };
+  jobs.set(id, job);
+  // Clean up old jobs after 30 minutes
+  setTimeout(() => jobs.delete(id), 30 * 60 * 1000);
+  return job;
+}
+
 function createLogsRouter(pool) {
   const router = express.Router();
 
@@ -188,11 +206,25 @@ function createLogsRouter(pool) {
     }
   });
 
-  // POST /api/v1/cdr/logs/sip-ladder
+  // POST /api/v1/cdr/logs/sip-ladder — starts background job, returns jobId
   router.post("/sip-ladder", async (req, res) => {
     const { callId, callManagerId } = req.body;
     if (!callId) {
       return res.status(400).json({ error: "callId is required" });
+    }
+
+    // Check if there's already a running job for this call
+    const jobId = `${callId}-${callManagerId || ""}`;
+    const existing = jobs.get(jobId);
+    if (
+      existing &&
+      (existing.status === "downloading" || existing.status === "parsing")
+    ) {
+      return res.json({
+        jobId,
+        status: existing.status,
+        progress: existing.progress,
+      });
     }
 
     try {
@@ -208,124 +240,175 @@ function createLogsRouter(pool) {
         });
       }
 
-      // Query all subscriber nodes for complete SIP traces
-      const allNodes = await getAllNodes(clusterConfig);
-      const fromCisco = toCiscoDate(new Date(ctx.fromDate));
-      const toCisco = toCiscoDate(new Date(ctx.toDate));
-      const tzCisco = CISCO_TZ;
-      console.log(
-        `DIME sip-ladder: ${allNodes.length} nodes, cm=${ctx.callManagerId} from=${fromCisco} to=${toCisco} numbers=${ctx.numbers.join(",")}`,
-      );
+      const job = createJob(jobId);
+      res.json({ jobId, status: "pending", progress: job.progress });
 
-      // Query each node for log files
-      let allLogs = [];
-      for (const node of allNodes) {
+      // Run the download in the background
+      (async () => {
         try {
-          const logs = await selectLogFiles(
-            node,
-            clusterConfig.username,
-            clusterConfig.password,
-            "Cisco CallManager",
-            fromCisco,
-            toCisco,
-            tzCisco,
-          );
-          allLogs.push(...logs);
-        } catch (err) {
-          console.warn(`DIME select failed on ${node}: ${err.message}`);
-        }
-      }
-
-      if (allLogs.length === 0) {
-        return res.json({ messages: [], count: 0, files_searched: 0 });
-      }
-
-      // Process all files from all nodes
-      const allMessages = [];
-      let filesSearched = 0;
-
-      for (const file of allLogs) {
-        try {
-          const result = await getOneFile(
-            file.server,
-            clusterConfig.username,
-            clusterConfig.password,
-            file.absolutepath,
+          const allNodes = await getAllNodes(clusterConfig);
+          const fromCisco = toCiscoDate(new Date(ctx.fromDate));
+          const toCisco = toCiscoDate(new Date(ctx.toDate));
+          const tzCisco = CISCO_TZ;
+          console.log(
+            `DIME sip-ladder [${jobId}]: ${allNodes.length} nodes, from=${fromCisco} to=${toCisco} numbers=${ctx.numbers.join(",")}`,
           );
 
-          let content;
-          if (file.absolutepath.endsWith(".gz")) {
-            content = zlib.gunzipSync(result.data).toString("utf8");
-          } else {
-            content = result.data.toString("utf8");
+          job.status = "downloading";
+
+          // Query each node for log files
+          let allLogs = [];
+          for (const node of allNodes) {
+            job.progress.node = node;
+            try {
+              const logs = await selectLogFiles(
+                node,
+                clusterConfig.username,
+                clusterConfig.password,
+                "Cisco CallManager",
+                fromCisco,
+                toCisco,
+                tzCisco,
+              );
+              allLogs.push(...logs);
+            } catch (err) {
+              console.warn(`DIME select failed on ${node}: ${err.message}`);
+            }
           }
 
-          const messages = parseSdlTrace(content, ctx.numbers);
-          allMessages.push(...messages);
-          filesSearched++;
-        } catch (fileErr) {
-          console.warn(`Failed to process ${file.name}: ${fileErr.message}`);
+          job.progress.filesTotal = allLogs.length;
+
+          if (allLogs.length === 0) {
+            job.status = "complete";
+            job.result = { messages: [], count: 0, files_searched: 0 };
+            return;
+          }
+
+          job.status = "parsing";
+          const allMessages = [];
+          let filesSearched = 0;
+
+          for (const file of allLogs) {
+            try {
+              const result = await getOneFile(
+                file.server,
+                clusterConfig.username,
+                clusterConfig.password,
+                file.absolutepath,
+              );
+
+              let content;
+              if (file.absolutepath.endsWith(".gz")) {
+                content = zlib.gunzipSync(result.data).toString("utf8");
+              } else {
+                content = result.data.toString("utf8");
+              }
+
+              const messages = parseSdlTrace(content, ctx.numbers);
+              allMessages.push(...messages);
+              filesSearched++;
+              job.progress.filesDownloaded = filesSearched;
+            } catch (fileErr) {
+              console.warn(
+                `Failed to process ${file.name}: ${fileErr.message}`,
+              );
+              job.progress.filesDownloaded++;
+            }
+          }
+
+          allMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
+          const callIds = [
+            ...new Set(allMessages.map((m) => m.callId).filter(Boolean)),
+          ];
+
+          const responseData = {
+            messages: allMessages.map((m) => ({
+              timestamp: m.timestamp,
+              direction: m.direction,
+              type: m.type,
+              method: m.method || null,
+              statusCode: m.statusCode || null,
+              reasonPhrase: m.reasonPhrase || null,
+              summary: m.summary,
+              callId: m.callId,
+              fromNumber: m.fromNumber,
+              toNumber: m.toNumber,
+              from: m.from,
+              to: m.to,
+              cseq: m.cseq,
+              remoteIp: m.remoteIp,
+              remotePort: m.remotePort,
+              raw: m.raw,
+            })),
+            count: allMessages.length,
+            callIds,
+            files_searched: filesSearched,
+            timeWindow: { from: ctx.fromDate, to: ctx.toDate },
+            node: allNodes.join(","),
+          };
+
+          job.status = "complete";
+          job.result = responseData;
+
+          // Auto-save snapshot to disk
+          try {
+            const dir = path.join(
+              SNAPSHOT_DIR,
+              `${callId}-${ctx.callManagerId}`,
+            );
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            const filePath = path.join(dir, "sip-trace.json");
+            fs.writeFileSync(filePath, JSON.stringify(responseData), "utf8");
+            const fileSize = fs.statSync(filePath).size;
+            const relPath = `${callId}-${ctx.callManagerId}/sip-trace.json`;
+            pool
+              .query(
+                `INSERT INTO call_snapshots (globalcallid_callid, globalcallid_callmanagerid, type, file_path, file_size)
+               VALUES ($1, $2, 'sip-trace', $3, $4)
+               ON CONFLICT (globalcallid_callid, globalcallid_callmanagerid, type, device_name)
+               DO UPDATE SET file_path = $3, file_size = $4, created_at = NOW()`,
+                [callId, ctx.callManagerId, relPath, fileSize],
+              )
+              .catch((e) => console.warn("Snapshot save failed:", e.message));
+          } catch (e) {
+            console.warn("Snapshot write failed:", e.message);
+          }
+        } catch (err) {
+          console.error(`SIP ladder job [${jobId}] failed:`, err.message);
+          job.status = "error";
+          job.error = err.message;
         }
-      }
-
-      allMessages.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-
-      const callIds = [
-        ...new Set(allMessages.map((m) => m.callId).filter(Boolean)),
-      ];
-
-      const responseData = {
-        messages: allMessages.map((m) => ({
-          timestamp: m.timestamp,
-          direction: m.direction,
-          type: m.type,
-          method: m.method || null,
-          statusCode: m.statusCode || null,
-          reasonPhrase: m.reasonPhrase || null,
-          summary: m.summary,
-          callId: m.callId,
-          fromNumber: m.fromNumber,
-          toNumber: m.toNumber,
-          from: m.from,
-          to: m.to,
-          cseq: m.cseq,
-          remoteIp: m.remoteIp,
-          remotePort: m.remotePort,
-          raw: m.raw,
-        })),
-        count: allMessages.length,
-        callIds,
-        files_searched: filesSearched,
-        timeWindow: { from: ctx.fromDate, to: ctx.toDate },
-        node: allNodes.join(","),
-      };
-
-      res.json(responseData);
-
-      // Auto-save snapshot to disk (fire and forget)
-      try {
-        const dir = path.join(SNAPSHOT_DIR, `${callId}-${ctx.callManagerId}`);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        const filePath = path.join(dir, "sip-trace.json");
-        fs.writeFileSync(filePath, JSON.stringify(responseData), "utf8");
-        const fileSize = fs.statSync(filePath).size;
-        const relPath = `${callId}-${ctx.callManagerId}/sip-trace.json`;
-        pool
-          .query(
-            `INSERT INTO call_snapshots (globalcallid_callid, globalcallid_callmanagerid, type, file_path, file_size)
-           VALUES ($1, $2, 'sip-trace', $3, $4)
-           ON CONFLICT (globalcallid_callid, globalcallid_callmanagerid, type, device_name)
-           DO UPDATE SET file_path = $3, file_size = $4, created_at = NOW()`,
-            [callId, ctx.callManagerId, relPath, fileSize],
-          )
-          .catch((e) => console.warn("Snapshot save failed:", e.message));
-      } catch (e) {
-        console.warn("Snapshot write failed:", e.message);
-      }
+      })();
     } catch (err) {
       console.error("SIP ladder failed:", err.message);
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // GET /api/v1/cdr/logs/sip-ladder/status/:jobId — poll for job progress
+  router.get("/sip-ladder/status/:jobId", (req, res) => {
+    const job = jobs.get(req.params.jobId);
+    if (!job) {
+      return res.status(404).json({ error: "Job not found or expired" });
+    }
+
+    const response = {
+      jobId: job.id,
+      status: job.status,
+      progress: job.progress,
+      elapsed: Math.round((Date.now() - job.startedAt) / 1000),
+    };
+
+    if (job.status === "complete") {
+      response.result = job.result;
+      // Clean up after delivery
+      setTimeout(() => jobs.delete(job.id), 60000);
+    } else if (job.status === "error") {
+      response.error = job.error;
+    }
+
+    res.json(response);
   });
 
   return router;
