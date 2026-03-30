@@ -207,11 +207,12 @@ function parsePhonePage(page, html) {
   if (pairs.length === 0 && page === "status") {
     const statusLines = [];
     const singleCell =
-      /<td[^>]*>\s*<\/td>\s*<td[^>]*>\s*<b>\s*(.*?)\s*<\/b>\s*<\/td>/gi;
+      /<td[^>]*>\s*<\/td>\s*<td[^>]*>\s*<b>\s*(.*?)\s*<\/b>\s*<\/td>/gis;
     while ((match = singleCell.exec(html)) !== null) {
       const line = match[1]
         .replace(/<[^>]+>/g, "")
         .replace(/&#x2F;/g, "/")
+        .replace(/\s+/g, " ")
         .trim();
       if (line) statusLines.push(line);
     }
