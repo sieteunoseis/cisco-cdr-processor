@@ -5,6 +5,7 @@ const { createSqlRouter } = require("./routes/sql");
 const { createLogsRouter } = require("./routes/logs");
 const { createStarredRouter } = require("./routes/starred");
 const { createDeviceRouter } = require("./routes/device");
+const { createSnapshotsRouter } = require("./routes/snapshots");
 
 function createRestServer(pool) {
   const app = express();
@@ -28,6 +29,7 @@ function createRestServer(pool) {
   app.use("/api/v1/health", createHealthRouter(pool));
   app.use("/api/v1/starred", createStarredRouter(pool));
   app.use("/api/v1/device", createDeviceRouter());
+  app.use("/api/v1/snapshots", createSnapshotsRouter(pool));
 
   // 404 fallback for unknown API routes
   app.use("/api", (req, res) => {

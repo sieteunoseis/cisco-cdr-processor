@@ -22,6 +22,9 @@ const axlService = require("cisco-axl");
 const { parseSdlTrace } = require("../../parser/sdl-parser");
 const config = require("../../config");
 const zlib = require("zlib");
+const fs = require("fs");
+const path = require("path");
+const { SNAPSHOT_DIR } = require("./snapshots");
 
 function findClusterConfig(clusterId) {
   if (!config.axl.clusters || !config.axl.clusters.length || !clusterId) {
@@ -252,7 +255,7 @@ function createLogsRouter(pool) {
         ...new Set(allMessages.map((m) => m.callId).filter(Boolean)),
       ];
 
-      res.json({
+      const responseData = {
         messages: allMessages.map((m) => ({
           timestamp: m.timestamp,
           direction: m.direction,
@@ -276,7 +279,30 @@ function createLogsRouter(pool) {
         files_searched: filesToProcess.length,
         timeWindow: { from: ctx.fromDate, to: ctx.toDate },
         node: dimeHost,
-      });
+      };
+
+      res.json(responseData);
+
+      // Auto-save snapshot to disk (fire and forget)
+      try {
+        const dir = path.join(SNAPSHOT_DIR, `${callId}-${ctx.callManagerId}`);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        const filePath = path.join(dir, "sip-trace.json");
+        fs.writeFileSync(filePath, JSON.stringify(responseData), "utf8");
+        const fileSize = fs.statSync(filePath).size;
+        const relPath = `${callId}-${ctx.callManagerId}/sip-trace.json`;
+        pool
+          .query(
+            `INSERT INTO call_snapshots (globalcallid_callid, globalcallid_callmanagerid, type, file_path, file_size)
+           VALUES ($1, $2, 'sip-trace', $3, $4)
+           ON CONFLICT (globalcallid_callid, globalcallid_callmanagerid, type, device_name)
+           DO UPDATE SET file_path = $3, file_size = $4, created_at = NOW()`,
+            [callId, ctx.callManagerId, relPath, fileSize],
+          )
+          .catch((e) => console.warn("Snapshot save failed:", e.message));
+      } catch (e) {
+        console.warn("Snapshot write failed:", e.message);
+      }
     } catch (err) {
       console.error("SIP ladder failed:", err.message);
       res.status(500).json({ error: err.message });
