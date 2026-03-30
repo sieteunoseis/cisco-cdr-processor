@@ -203,6 +203,23 @@ function parsePhonePage(page, html) {
     }
   }
 
+  // For status pages with single-cell log entries: <td spacer></td><TD><B>[timestamp] message</B></TD>
+  if (pairs.length === 0 && page === "status") {
+    const statusLines = [];
+    const singleCell =
+      /<td[^>]*>\s*<\/td>\s*<td[^>]*>\s*<b>\s*(.*?)\s*<\/b>\s*<\/td>/gi;
+    while ((match = singleCell.exec(html)) !== null) {
+      const line = match[1]
+        .replace(/<[^>]+>/g, "")
+        .replace(/&#x2F;/g, "/")
+        .trim();
+      if (line) statusLines.push(line);
+    }
+    if (statusLines.length > 0) {
+      return { text: statusLines.join("\n") };
+    }
+  }
+
   return { data: pairs };
 }
 
