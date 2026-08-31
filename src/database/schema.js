@@ -56,6 +56,12 @@ async function initSchema(pool) {
     "utf8",
   );
   await pool.query(snapshotsSql);
+
+  const labelRulesSql = fs.readFileSync(
+    path.join(SQL_DIR, "Migration005_label_rules.sql"),
+    "utf8",
+  );
+  await pool.query(labelRulesSql);
   console.log("Migrations applied.");
 }
 
