@@ -14,9 +14,8 @@ CREATE TABLE IF NOT EXISTS label_rules (
 CREATE INDEX IF NOT EXISTS idx_label_rules_enabled ON label_rules(enabled);
 
 INSERT INTO label_rules (label, color, fields, pattern, enabled)
-SELECT 'Analog', 'yellow', '["origDevice","destDevice"]'::jsonb, '^(ATA|AN[0-9A-F])', true
+SELECT * FROM (VALUES
+  ('Analog', 'yellow', '["origDevice","destDevice"]'::jsonb, '^(ATA|AN[0-9A-F])', true),
+  ('Emergency', 'red', '["called"]'::jsonb, '^(911|112|999|000|111)$', true)
+) AS defaults(label, color, fields, pattern, enabled)
 WHERE NOT EXISTS (SELECT 1 FROM label_rules);
-
-INSERT INTO label_rules (label, color, fields, pattern, enabled)
-SELECT 'Emergency', 'red', '["called"]'::jsonb, '^(911|112|999|000|111)$', true
-WHERE NOT EXISTS (SELECT 1 FROM label_rules WHERE label = 'Emergency');
