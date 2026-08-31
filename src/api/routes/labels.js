@@ -87,7 +87,7 @@ function createLabelsRouter(pool) {
   router.get("/", async (req, res) => {
     try {
       const result = await pool.query(
-        "SELECT * FROM label_rules ORDER BY created_at ASC",
+        "SELECT * FROM label_rules ORDER BY created_at ASC, id ASC",
       );
       res.json({ rules: result.rows.map(serializeRule) });
     } catch (err) {
@@ -155,7 +155,7 @@ function createLabelsRouter(pool) {
     }
 
     const result = await pool.query(
-      "SELECT * FROM label_rules ORDER BY created_at ASC",
+      "SELECT * FROM label_rules ORDER BY created_at ASC, id ASC",
     );
     res.json({
       imported: validated.length,
@@ -211,7 +211,7 @@ function createLabelsRouter(pool) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      await client.query("TRUNCATE label_rules RESTART IDENTITY");
+      await client.query("DELETE FROM label_rules");
       for (const rule of DEFAULT_SEED) {
         await client.query(
           `INSERT INTO label_rules (label, color, fields, pattern, enabled)
@@ -234,7 +234,7 @@ function createLabelsRouter(pool) {
     }
 
     const result = await pool.query(
-      "SELECT * FROM label_rules ORDER BY created_at ASC",
+      "SELECT * FROM label_rules ORDER BY created_at ASC, id ASC",
     );
     res.json({ rules: result.rows.map(serializeRule) });
   });
