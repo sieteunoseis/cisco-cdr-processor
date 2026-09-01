@@ -36,6 +36,11 @@ const config = {
     incomingDir: process.env.CDR_INCOMING_DIR || "/data/incoming",
     retentionDays: parseInt(process.env.CDR_RETENTION_DAYS || "90", 10),
   },
+  twilio: {
+    accountSid: process.env.TWILIO_ACCOUNT_SID || "",
+    apiKeySid: process.env.TWILIO_API_KEY_SID || "",
+    apiKeySecret: process.env.TWILIO_API_KEY_SECRET || "",
+  },
   server: {
     port: parseInt(process.env.MCP_PORT || "3000", 10),
   },
