@@ -23,6 +23,20 @@ const QUALITY_METRICS = {
 };
 const VALID_METRICS = Object.keys(QUALITY_METRICS);
 
+// CMR legs with too few packets don't have enough samples for a real
+// quality measurement (a genuine call sends ~50 packets/sec for G.711;
+// legs with e.g. 54 packets over 232 seconds are signaling-only or
+// otherwise ungraded, not really that call's quality). Applied to every
+// quality_degradation query regardless of metric. MOS specifically also
+// uses a hard 0 as an "ungraded" sentinel rather than a real score — real
+// bad calls score fractionally (1.x-3.x), never a clean 0 — so mos=0 rows
+// are excluded outright for that metric.
+const MIN_GRADED_PACKETS = 50;
+function qualityGradedClause(metric) {
+  const base = `m.numberpacketssent >= ${MIN_GRADED_PACKETS}`;
+  return metric === "mos" ? `${base} AND m.moslqk > 0` : base;
+}
+
 // Maps a label rule's `fields` entries to the cdr columns they match
 // against — same mapping the frontend's matchLabelRules uses, kept in
 // sync so label_volume rules match the exact same calls a label badge
@@ -240,6 +254,7 @@ async function evaluateRule(pool, rule) {
           ON c.globalcallid_callmanagerid = m.globalcallid_callmanagerid
           AND c.globalcallid_callid = m.globalcallid_callid
         WHERE c.datetimeorigination >= now() - interval '${interval}'
+          AND ${qualityGradedClause(rule.metric)}
           ${scopeClause}
       `,
       params,
@@ -574,6 +589,7 @@ function createAlertsRouter(pool) {
               AND c.globalcallid_callid = m.globalcallid_callid
             WHERE c.datetimeorigination >= now() - interval '${interval}'
               AND m.${metricDef.column} ${op} ${rule.threshold}
+              AND ${qualityGradedClause(rule.metric)}
               ${scopeClause}
             ORDER BY m.${metricDef.column} ${order}
             LIMIT 10
