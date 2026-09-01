@@ -21,11 +21,16 @@ const LABEL_FIELD_COLUMNS = {
   destDevice: "destdevicename",
 };
 
+const VALID_DIRECTIONS = ["above", "below"];
+// Types whose label_id is an optional scope filter rather than a required
+// selector — volume_spike/failure_rate run org-wide unless scoped.
+const LABEL_SCOPABLE_TYPES = ["volume_spike", "failure_rate"];
+
 function validateRulePayload(body) {
   if (!body || typeof body !== "object") {
     return { valid: false, error: "Rule payload required" };
   }
-  const { name, type, window, threshold, enabled, labelId } = body;
+  const { name, type, window, threshold, enabled, labelId, direction } = body;
 
   if (typeof name !== "string" || !name.trim()) {
     return { valid: false, error: "name is required" };
@@ -46,6 +51,14 @@ function validateRulePayload(body) {
   if (!Number.isFinite(thresholdNum) || thresholdNum <= 0) {
     return { valid: false, error: "threshold must be a positive number" };
   }
+  const directionVal =
+    direction === undefined || direction === null ? "above" : direction;
+  if (!VALID_DIRECTIONS.includes(directionVal)) {
+    return {
+      valid: false,
+      error: `direction must be one of: ${VALID_DIRECTIONS.join(", ")}`,
+    };
+  }
   let labelIdNum = null;
   if (type === "label_volume") {
     labelIdNum = Number(labelId);
@@ -54,6 +67,12 @@ function validateRulePayload(body) {
         valid: false,
         error: "labelId is required for label_volume rules",
       };
+    }
+  } else if (LABEL_SCOPABLE_TYPES.includes(type) && labelId) {
+    // Optional scope — only validate the shape if one was actually given.
+    labelIdNum = Number(labelId);
+    if (!Number.isInteger(labelIdNum) || labelIdNum <= 0) {
+      return { valid: false, error: "labelId must be a valid label id" };
     }
   }
 
@@ -66,6 +85,7 @@ function validateRulePayload(body) {
       threshold: thresholdNum,
       enabled: enabled === undefined ? true : !!enabled,
       labelId: labelIdNum,
+      direction: directionVal,
     },
   };
 }
@@ -79,6 +99,7 @@ function serializeRule(row) {
     threshold: Number(row.threshold),
     enabled: row.enabled,
     labelId: row.label_id ? String(row.label_id) : null,
+    direction: row.direction,
     createdAt: row.created_at,
   };
 }
@@ -138,7 +159,10 @@ async function evaluateRule(pool, rule) {
     const matched = parseInt(result.rows[0].matched, 10);
     return {
       ...rule,
-      triggered: matched >= rule.threshold,
+      triggered:
+        rule.direction === "below"
+          ? matched <= rule.threshold
+          : matched >= rule.threshold,
       current: matched,
       baseline: total,
       value: matched,
@@ -168,37 +192,56 @@ async function evaluateRule(pool, rule) {
   }
 
   if (rule.type === "volume_spike") {
-    const result = await pool.query(`
-      SELECT
-        count(*) FILTER (WHERE datetimeorigination >= now() - interval '${interval}') AS current_count,
-        count(*) FILTER (
-          WHERE datetimeorigination >= now() - interval '${interval}' * 2
-            AND datetimeorigination < now() - interval '${interval}'
-        ) AS prior_count
-      FROM cdr
-    `);
+    let match = null;
+    if (rule.labelId) match = await loadLabelMatchClause(pool, rule.labelId);
+    const scopeClause = match ? `AND (${match.clause})` : "";
+    const params = match ? [match.pattern] : [];
+    const result = await pool.query(
+      `
+        SELECT
+          count(*) FILTER (WHERE datetimeorigination >= now() - interval '${interval}') AS current_count,
+          count(*) FILTER (
+            WHERE datetimeorigination >= now() - interval '${interval}' * 2
+              AND datetimeorigination < now() - interval '${interval}'
+          ) AS prior_count
+        FROM cdr
+        WHERE true ${scopeClause}
+      `,
+      params,
+    );
     const current = parseInt(result.rows[0].current_count, 10);
     const prior = parseInt(result.rows[0].prior_count, 10);
     const ratio = prior > 0 ? current / prior : current > 0 ? Infinity : 0;
-    const triggered = prior > 0 ? ratio >= rule.threshold : current > 0;
+    const triggered =
+      rule.direction === "below"
+        ? prior > 0 && ratio <= rule.threshold
+        : prior > 0
+          ? ratio >= rule.threshold
+          : current > 0;
     return {
       ...rule,
       triggered,
       current,
       baseline: prior,
       value: Number.isFinite(ratio) ? Number(ratio.toFixed(2)) : null,
+      labelName: match ? match.label : null,
     };
   }
 
   // failure_rate
+  let match = null;
+  if (rule.labelId) match = await loadLabelMatchClause(pool, rule.labelId);
+  const scopeClause = match ? `AND (${match.clause})` : "";
+  const params = match ? [match.pattern] : [];
   const result = await pool.query(
     `
       SELECT
         count(*) AS total,
         count(*) FILTER (WHERE destcause_value != 16) AS failed
       FROM cdr
-      WHERE datetimeorigination >= now() - interval '${interval}'
+      WHERE datetimeorigination >= now() - interval '${interval}' ${scopeClause}
     `,
+    params,
   );
   const total = parseInt(result.rows[0].total, 10);
   const failed = parseInt(result.rows[0].failed, 10);
@@ -209,17 +252,19 @@ async function evaluateRule(pool, rule) {
     current: failed,
     baseline: total,
     value: Number(pct.toFixed(1)),
+    labelName: match ? match.label : null,
   };
 }
 
 // Top calling/called numbers behind a rule's current trigger. volume_spike
 // ranks by (current window count - prior window count) — the numbers
-// actually driving the increase, not just the numbers that are always
-// busy. failure_rate ranks by raw failed-call count — a number with a
+// actually driving the change, not just the numbers that are always busy
+// (ascending for a "below"/drop rule, so the biggest decreases sort
+// first). failure_rate ranks by raw failed-call count — a number with a
 // 100% failure rate on 2 calls matters less than one with 50 failures.
 // label_volume ranks by raw match count within the label's own matched
 // set. `labelMatch` (from loadLabelMatchClause) is required for
-// label_volume and unused otherwise.
+// label_volume and an optional scope filter for volume_spike/failure_rate.
 async function breakdownByColumn(pool, column, rule, interval, labelMatch) {
   if (rule.type === "label_volume") {
     const result = await pool.query(
@@ -242,24 +287,31 @@ async function breakdownByColumn(pool, column, rule, interval, labelMatch) {
   }
 
   if (rule.type === "volume_spike") {
-    const result = await pool.query(`
-      SELECT number, current, prior, (current - prior) AS delta
-      FROM (
-        SELECT ${column} AS number,
-          count(*) FILTER (WHERE datetimeorigination >= now() - interval '${interval}') AS current,
-          count(*) FILTER (
-            WHERE datetimeorigination >= now() - interval '${interval}' * 2
-              AND datetimeorigination < now() - interval '${interval}'
-          ) AS prior
-        FROM cdr
-        WHERE datetimeorigination >= now() - interval '${interval}' * 2
-          AND ${column} IS NOT NULL
-        GROUP BY ${column}
-      ) x
-      WHERE current > 0
-      ORDER BY delta DESC
-      LIMIT 10
-    `);
+    const scopeClause = labelMatch ? `AND (${labelMatch.clause})` : "";
+    const params = labelMatch ? [labelMatch.pattern] : [];
+    const order = rule.direction === "below" ? "ASC" : "DESC";
+    const result = await pool.query(
+      `
+        SELECT number, current, prior, (current - prior) AS delta
+        FROM (
+          SELECT ${column} AS number,
+            count(*) FILTER (WHERE datetimeorigination >= now() - interval '${interval}') AS current,
+            count(*) FILTER (
+              WHERE datetimeorigination >= now() - interval '${interval}' * 2
+                AND datetimeorigination < now() - interval '${interval}'
+            ) AS prior
+          FROM cdr
+          WHERE datetimeorigination >= now() - interval '${interval}' * 2
+            AND ${column} IS NOT NULL
+            ${scopeClause}
+          GROUP BY ${column}
+        ) x
+        WHERE current > 0 OR prior > 0
+        ORDER BY delta ${order}
+        LIMIT 10
+      `,
+      params,
+    );
     return result.rows.map((r) => ({
       number: r.number,
       current: parseInt(r.current, 10),
@@ -269,27 +321,35 @@ async function breakdownByColumn(pool, column, rule, interval, labelMatch) {
   }
 
   // failure_rate
-  const result = await pool.query(`
-    SELECT number, total, failed, ROUND(failed::numeric / total * 100, 1) AS rate
-    FROM (
-      SELECT ${column} AS number,
-        count(*) AS total,
-        count(*) FILTER (WHERE destcause_value != 16) AS failed
-      FROM cdr
-      WHERE datetimeorigination >= now() - interval '${interval}'
-        AND ${column} IS NOT NULL
-      GROUP BY ${column}
-    ) x
-    WHERE failed > 0
-    ORDER BY failed DESC
-    LIMIT 10
-  `);
-  return result.rows.map((r) => ({
-    number: r.number,
-    total: parseInt(r.total, 10),
-    failed: parseInt(r.failed, 10),
-    rate: Number(r.rate),
-  }));
+  {
+    const scopeClause = labelMatch ? `AND (${labelMatch.clause})` : "";
+    const params = labelMatch ? [labelMatch.pattern] : [];
+    const result = await pool.query(
+      `
+        SELECT number, total, failed, ROUND(failed::numeric / total * 100, 1) AS rate
+        FROM (
+          SELECT ${column} AS number,
+            count(*) AS total,
+            count(*) FILTER (WHERE destcause_value != 16) AS failed
+          FROM cdr
+          WHERE datetimeorigination >= now() - interval '${interval}'
+            AND ${column} IS NOT NULL
+            ${scopeClause}
+          GROUP BY ${column}
+        ) x
+        WHERE failed > 0
+        ORDER BY failed DESC
+        LIMIT 10
+      `,
+      params,
+    );
+    return result.rows.map((r) => ({
+      number: r.number,
+      total: parseInt(r.total, 10),
+      failed: parseInt(r.failed, 10),
+      rate: Number(r.rate),
+    }));
+  }
 }
 
 function createAlertsRouter(pool) {
@@ -312,12 +372,12 @@ function createAlertsRouter(pool) {
       return res.status(400).json({ error: validation.error });
     }
     try {
-      const { name, type, window, threshold, enabled, labelId } =
+      const { name, type, window, threshold, enabled, labelId, direction } =
         validation.rule;
       const result = await pool.query(
-        `INSERT INTO alert_rules (name, type, lookback, threshold, enabled, label_id)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-        [name, type, window, threshold, enabled, labelId],
+        `INSERT INTO alert_rules (name, type, lookback, threshold, enabled, label_id, direction)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+        [name, type, window, threshold, enabled, labelId, direction],
       );
       res.status(201).json({ rule: serializeRule(result.rows[0]) });
     } catch (err) {
@@ -341,13 +401,13 @@ function createAlertsRouter(pool) {
       if (!validation.valid) {
         return res.status(400).json({ error: validation.error });
       }
-      const { name, type, window, threshold, enabled, labelId } =
+      const { name, type, window, threshold, enabled, labelId, direction } =
         validation.rule;
       const result = await pool.query(
         `UPDATE alert_rules
-         SET name = $1, type = $2, lookback = $3, threshold = $4, enabled = $5, label_id = $6
-         WHERE id = $7 RETURNING *`,
-        [name, type, window, threshold, enabled, labelId, id],
+         SET name = $1, type = $2, lookback = $3, threshold = $4, enabled = $5, label_id = $6, direction = $7
+         WHERE id = $8 RETURNING *`,
+        [name, type, window, threshold, enabled, labelId, direction, id],
       );
       res.json({ rule: serializeRule(result.rows[0]) });
     } catch (err) {
@@ -407,9 +467,11 @@ function createAlertsRouter(pool) {
       }
 
       let labelMatch = null;
-      if (rule.type === "label_volume") {
+      if (rule.labelId) {
         labelMatch = await loadLabelMatchClause(pool, rule.labelId);
-        if (!labelMatch) return res.json({ byCalling: [], byCalled: [] });
+        if (!labelMatch && rule.type === "label_volume") {
+          return res.json({ byCalling: [], byCalled: [] });
+        }
       }
 
       const [byCalling, byCalled] = await Promise.all([
