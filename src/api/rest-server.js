@@ -9,6 +9,7 @@ const { createSnapshotsRouter } = require("./routes/snapshots");
 const { createLabelsRouter } = require("./routes/labels");
 const { createNumplanRouter } = require("./routes/numplan");
 const { createSpamRouter } = require("./routes/spam");
+const { createAlertsRouter } = require("./routes/alerts");
 
 function createRestServer(pool) {
   const app = express();
@@ -36,6 +37,7 @@ function createRestServer(pool) {
   app.use("/api/v1/labels", createLabelsRouter(pool));
   app.use("/api/v1/numplan", createNumplanRouter(pool));
   app.use("/api/v1/spam", createSpamRouter(pool));
+  app.use("/api/v1/alerts", createAlertsRouter(pool));
 
   // 404 fallback for unknown API routes
   app.use("/api", (req, res) => {

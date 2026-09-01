@@ -74,6 +74,12 @@ async function initSchema(pool) {
     "utf8",
   );
   await pool.query(labelExternalSql);
+
+  const alertRulesSql = fs.readFileSync(
+    path.join(SQL_DIR, "Migration008_alert_rules.sql"),
+    "utf8",
+  );
+  await pool.query(alertRulesSql);
   console.log("Migrations applied.");
 }
 
