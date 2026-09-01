@@ -83,6 +83,22 @@ const DEFAULT_SEED = [
     enabled: true,
     external: false,
   },
+  {
+    label: "Recording",
+    color: "gray",
+    fields: ["calling", "called", "origDevice", "destDevice"],
+    pattern: "^b\\d{5,}|Inform|Record|BIB",
+    enabled: true,
+    external: true,
+  },
+  {
+    label: "Phone Device",
+    color: "blue",
+    fields: ["origDevice", "destDevice"],
+    pattern: "^(SEP|AN[A-F0-9]|JBR|TCT|BOT|CSF)",
+    enabled: true,
+    external: false,
+  },
 ];
 
 function createLabelsRouter(pool) {
