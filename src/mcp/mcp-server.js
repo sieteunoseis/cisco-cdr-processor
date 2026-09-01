@@ -15,6 +15,7 @@ function createServerInstance(pool) {
     require("./tools/cdr-quality"),
     require("./tools/cdr-stats"),
     require("./tools/cdr-health"),
+    require("./tools/numplan-available"),
   ];
 
   for (const tool of tools) {

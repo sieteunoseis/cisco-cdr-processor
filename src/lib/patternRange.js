@@ -41,9 +41,11 @@ function splitTopLevelAlternation(inner) {
 
 // Tokenize a regex tail (the part after the literal prefix) into a
 // sequence of positional atoms — a literal digit, a [..] character class,
-// or a (?:A|B|...) group whose branches all resolve to the same width.
-// Returns the total width, or null if the tail contains anything this
-// narrow tokenizer doesn't recognize (quantifiers, capturing groups,
+// or a (A|B|...) / (?:A|B|...) group whose branches all resolve to the
+// same width (capturing and non-capturing groups are treated the same —
+// we only ever test/match, never read a captured value, so the capture
+// itself is irrelevant). Returns the total width, or null if the tail
+// contains anything this narrow tokenizer doesn't recognize (quantifiers,
 // backreferences, non-digit literals, unequal-width alternation, etc.).
 function tokenizeWidth(rest) {
   let width = 0;
@@ -56,10 +58,11 @@ function tokenizeWidth(rest) {
       width += 1;
       i = end + 1;
     } else if (ch === "(") {
-      if (rest.slice(i, i + 3) !== "(?:") return null;
+      const isNonCapturing = rest.slice(i, i + 3) === "(?:";
+      const groupStart = isNonCapturing ? i + 3 : i + 1;
       const end = findGroupEnd(rest, i);
       if (end === -1) return null;
-      const inner = rest.slice(i + 3, end);
+      const inner = rest.slice(groupStart, end);
       const branches = splitTopLevelAlternation(inner);
       if (branches.length === 0) return null;
       const branchWidths = branches.map((b) => tokenizeWidth(b));
@@ -79,19 +82,23 @@ function tokenizeWidth(rest) {
 }
 
 // Resolve an anchored regex pattern to { prefix, width } if it describes a
-// fixed-width digit sequence: a literal all-digit prefix followed by a
-// bounded number of variable digit positions (<= MAX_WIDTH). Returns null
+// fixed-width digit sequence: an all-digit literal prefix (possibly empty
+// — e.g. "^(911|112|999)$" has no literal prefix at all, but still
+// resolves to a small fixed-width alternation) followed by a bounded
+// number of variable digit positions (<= MAX_WIDTH). Returns null
 // otherwise — including when the prefix contains a non-digit character,
 // which matters beyond correctness: this prefix later gets embedded in an
 // AXL SQL query, so rejecting non-digit prefixes here is also what
-// prevents a crafted pattern from injecting into that query.
+// prevents a crafted pattern from injecting into that query. An empty
+// prefix is trivially safe for that same reason — it contributes nothing
+// to the query string.
 function resolvePatternRange(pattern) {
   if (typeof pattern !== "string") return null;
   if (!pattern.startsWith("^") || !pattern.endsWith("$")) return null;
   const body = pattern.slice(1, -1);
 
   const { prefix, rest } = extractPrefix(body);
-  if (!/^[0-9]+$/.test(prefix)) return null;
+  if (!/^[0-9]*$/.test(prefix)) return null;
 
   const width = tokenizeWidth(rest);
   if (width === null || width === 0 || width > MAX_WIDTH) return null;

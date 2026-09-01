@@ -17,8 +17,18 @@ describe("resolvePatternRange", () => {
     assert.deepStrictEqual(result, { prefix: "5030073", width: 3 });
   });
 
-  it("returns null for a pattern with no literal digit prefix", () => {
+  it("resolves a pattern with no literal prefix via a capturing-group alternation", () => {
     const result = resolvePatternRange("^(911|112|999|000|111)$");
+    assert.deepStrictEqual(result, { prefix: "", width: 3 });
+  });
+
+  it("resolves a non-capturing-group alternation the same as a capturing one", () => {
+    const result = resolvePatternRange("^(?:911|112)$");
+    assert.deepStrictEqual(result, { prefix: "", width: 3 });
+  });
+
+  it("returns null for a pattern whose prefix has non-digit characters before any group", () => {
+    const result = resolvePatternRange("^AN(?:1|2)$");
     assert.strictEqual(result, null);
   });
 
@@ -67,5 +77,11 @@ describe("enumerateMatches", () => {
     assert.strictEqual(result.length, 200);
     assert.strictEqual(result[0], "5030010000");
     assert.strictEqual(result[result.length - 1], "5030010199");
+  });
+
+  it("enumerates the Emergency pattern (empty prefix) to exactly its 5 real matches", () => {
+    const pattern = "^(911|112|999|000|111)$";
+    const result = enumerateMatches(pattern, "", 3);
+    assert.deepStrictEqual(result, ["000", "111", "112", "911", "999"]);
   });
 });

@@ -1,39 +1,19 @@
 // src/api/routes/numplan.js
 const express = require("express");
-const axlService = require("cisco-axl");
 const config = require("../../config");
 const {
   resolvePatternRange,
   enumerateMatches,
 } = require("../../lib/patternRange");
+const {
+  queryConfiguredNumbers,
+  queryDevicesForNumber,
+} = require("../../lib/numplanAxl");
 
 const PAGE_SIZE = 100;
 
 function getDefaultCluster() {
   return config.axl.clusters[0] || null;
-}
-
-async function queryConfiguredNumbers(cluster, numbers) {
-  if (numbers.length === 0) return new Map();
-  const quoted = numbers.map((n) => `'${n}'`).join(",");
-  const service = new axlService(
-    cluster.host,
-    cluster.username,
-    cluster.password,
-    cluster.version,
-  );
-  const sql = `SELECT dnorpattern, description FROM numplan WHERE dnorpattern IN (${quoted}) AND tkpatternusage = 2`;
-  const response = await service.executeSqlQuery(sql);
-  const raw = Array.isArray(response) ? response : response?.row || [];
-  const rows = Array.isArray(raw) ? raw : [raw];
-  const found = new Map();
-  for (const row of rows) {
-    found.set(
-      row.dnorpattern,
-      typeof row.description === "string" ? row.description : null,
-    );
-  }
-  return found;
 }
 
 function createNumplanRouter() {
@@ -86,6 +66,7 @@ function createNumplanRouter() {
       }));
       res.json({
         eligible: true,
+        prefix: resolved.prefix,
         totalCount,
         totalPages,
         page: clampedPage,
@@ -93,6 +74,26 @@ function createNumplanRouter() {
       });
     } catch (err) {
       console.error("AXL numplan query failed:", err.message);
+      res.status(502).json({ error: err.message });
+    }
+  });
+
+  router.get("/devices", async (req, res) => {
+    const { number } = req.query;
+    if (typeof number !== "string" || !/^[0-9]+$/.test(number)) {
+      return res.status(400).json({ error: "number must be a digit string" });
+    }
+
+    const cluster = getDefaultCluster();
+    if (!cluster) {
+      return res.status(503).json({ error: "No AXL cluster configured" });
+    }
+
+    try {
+      const devices = await queryDevicesForNumber(cluster, number);
+      res.json({ devices });
+    } catch (err) {
+      console.error("AXL device lookup failed:", err.message);
       res.status(502).json({ error: err.message });
     }
   });
