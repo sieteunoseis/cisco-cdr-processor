@@ -36,16 +36,12 @@ function interpretSpamResult(provider, result) {
   if (provider === "icehook_scout") {
     const rating = result?.risk_rating;
     if (typeof rating !== "string") return null;
+    // Pass through the entire raw Scout result (carrier, line type, porting,
+    // geo/LATA/OCN data, etc.) rather than cherry-picking fields — the UI
+    // shows all of it, and this way new Scout fields show up automatically.
     return {
       isSpam: rating === "likely" || rating === "highly_likely",
-      riskLevel: result.risk_level,
-      riskRating: rating,
-      // Carrier/line data Scout bundles into the same call — useful for
-      // troubleshooting (e.g. "this DID is actually a CenturyLink line,
-      // not ours") without a separate carrier-lookup add-on.
-      carrier: result.operating_company_name ?? null,
-      lineType: result.line_type ?? null,
-      ported: result.ported ?? null,
+      ...result,
     };
   }
   return null;
