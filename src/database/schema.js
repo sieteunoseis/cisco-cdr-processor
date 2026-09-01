@@ -62,6 +62,12 @@ async function initSchema(pool) {
     "utf8",
   );
   await pool.query(labelRulesSql);
+
+  const spamChecksSql = fs.readFileSync(
+    path.join(SQL_DIR, "Migration006_spam_checks.sql"),
+    "utf8",
+  );
+  await pool.query(spamChecksSql);
   console.log("Migrations applied.");
 }
 

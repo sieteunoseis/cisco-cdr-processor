@@ -51,8 +51,53 @@ function interpretSpamResult(provider, result) {
   return null;
 }
 
-function createSpamRouter() {
+function createSpamRouter(pool) {
   const router = express.Router();
+
+  // Batch cache lookup so the UI can hide "Check Spam" buttons for numbers
+  // already checked (avoids burning add-on credits on repeat checks) and
+  // show the persisted per-provider detail. Keyed by the *raw* input string
+  // the caller sent, not the normalized E.164 form, so the frontend doesn't
+  // need to duplicate toE164() to match up results.
+  router.get("/checked", async (req, res) => {
+    const raw = req.query.numbers;
+    if (typeof raw !== "string" || !raw.trim()) {
+      return res.json({ results: {} });
+    }
+
+    const e164ByInput = new Map();
+    for (const input of raw.split(",").map((s) => s.trim()).filter(Boolean)) {
+      const e164 = toE164(input);
+      if (e164) e164ByInput.set(input, e164);
+    }
+    if (e164ByInput.size === 0) {
+      return res.json({ results: {} });
+    }
+
+    try {
+      const e164List = [...new Set(e164ByInput.values())];
+      const dbResult = await pool.query(
+        "SELECT number, is_spam, providers, checked_at FROM spam_checks WHERE number = ANY($1)",
+        [e164List],
+      );
+      const byE164 = new Map(dbResult.rows.map((row) => [row.number, row]));
+
+      const results = {};
+      for (const [input, e164] of e164ByInput) {
+        const row = byE164.get(e164);
+        if (row) {
+          results[input] = {
+            isSpam: row.is_spam,
+            providers: row.providers,
+            checkedAt: row.checked_at,
+          };
+        }
+      }
+      res.json({ results });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
   router.post("/check", async (req, res) => {
     const { number } = req.body || {};
@@ -117,6 +162,20 @@ function createSpamRouter() {
         return res
           .status(502)
           .json({ error: "Spam check did not return a result" });
+      }
+
+      try {
+        await pool.query(
+          `INSERT INTO spam_checks (number, is_spam, providers, checked_at)
+           VALUES ($1, $2, $3, NOW())
+           ON CONFLICT (number) DO UPDATE
+             SET is_spam = $2, providers = $3, checked_at = NOW()`,
+          [e164, isSpam, JSON.stringify(providerResults)],
+        );
+      } catch (cacheErr) {
+        // Don't fail the check just because the cache write failed — the
+        // caller still gets a real result, just won't be remembered.
+        console.error("Failed to cache spam check result:", cacheErr.message);
       }
 
       // isSpam stays top-level (any provider flags it = spam) so existing

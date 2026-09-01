@@ -35,7 +35,7 @@ function createRestServer(pool) {
   app.use("/api/v1/snapshots", createSnapshotsRouter(pool));
   app.use("/api/v1/labels", createLabelsRouter(pool));
   app.use("/api/v1/numplan", createNumplanRouter());
-  app.use("/api/v1/spam", createSpamRouter());
+  app.use("/api/v1/spam", createSpamRouter(pool));
 
   // 404 fallback for unknown API routes
   app.use("/api", (req, res) => {
