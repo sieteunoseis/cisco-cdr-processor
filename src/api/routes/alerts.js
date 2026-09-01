@@ -109,6 +109,63 @@ async function evaluateRule(pool, rule) {
   };
 }
 
+// Top calling/called numbers behind a rule's current trigger. volume_spike
+// ranks by (current window count - prior window count) — the numbers
+// actually driving the increase, not just the numbers that are always
+// busy. failure_rate ranks by raw failed-call count — a number with a
+// 100% failure rate on 2 calls matters less than one with 50 failures.
+async function breakdownByColumn(pool, column, rule, interval) {
+  if (rule.type === "volume_spike") {
+    const result = await pool.query(`
+      SELECT number, current, prior, (current - prior) AS delta
+      FROM (
+        SELECT ${column} AS number,
+          count(*) FILTER (WHERE datetimeorigination >= now() - interval '${interval}') AS current,
+          count(*) FILTER (
+            WHERE datetimeorigination >= now() - interval '${interval}' * 2
+              AND datetimeorigination < now() - interval '${interval}'
+          ) AS prior
+        FROM cdr
+        WHERE datetimeorigination >= now() - interval '${interval}' * 2
+          AND ${column} IS NOT NULL
+        GROUP BY ${column}
+      ) x
+      WHERE current > 0
+      ORDER BY delta DESC
+      LIMIT 10
+    `);
+    return result.rows.map((r) => ({
+      number: r.number,
+      current: parseInt(r.current, 10),
+      prior: parseInt(r.prior, 10),
+      delta: parseInt(r.delta, 10),
+    }));
+  }
+
+  // failure_rate
+  const result = await pool.query(`
+    SELECT number, total, failed, ROUND(failed::numeric / total * 100, 1) AS rate
+    FROM (
+      SELECT ${column} AS number,
+        count(*) AS total,
+        count(*) FILTER (WHERE destcause_value != 16) AS failed
+      FROM cdr
+      WHERE datetimeorigination >= now() - interval '${interval}'
+        AND ${column} IS NOT NULL
+      GROUP BY ${column}
+    ) x
+    WHERE failed > 0
+    ORDER BY failed DESC
+    LIMIT 10
+  `);
+  return result.rows.map((r) => ({
+    number: r.number,
+    total: parseInt(r.total, 10),
+    failed: parseInt(r.failed, 10),
+    rate: Number(r.rate),
+  }));
+}
+
 function createAlertsRouter(pool) {
   const router = express.Router();
 
@@ -180,6 +237,27 @@ function createAlertsRouter(pool) {
         return res.status(404).json({ error: "Rule not found" });
       }
       res.json({ deleted: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.get("/rules/:id/breakdown", async (req, res) => {
+    try {
+      const existing = await pool.query(
+        "SELECT * FROM alert_rules WHERE id = $1",
+        [req.params.id],
+      );
+      if (existing.rowCount === 0) {
+        return res.status(404).json({ error: "Rule not found" });
+      }
+      const rule = serializeRule(existing.rows[0]);
+      const interval = parseTimeRange(rule.window);
+      const [byCalling, byCalled] = await Promise.all([
+        breakdownByColumn(pool, "callingpartynumber", rule, interval),
+        breakdownByColumn(pool, "finalcalledpartynumber", rule, interval),
+      ]);
+      res.json({ byCalling, byCalled });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
