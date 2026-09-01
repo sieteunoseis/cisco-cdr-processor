@@ -41,7 +41,7 @@ async function queryDevicesForNumber(cluster, number) {
     cluster.password,
     cluster.version,
   );
-  const sql = `SELECT d.name, d.description FROM numplan dm
+  const sql = `SELECT d.name, d.description, d.pkid FROM numplan dm
     JOIN devicenumplanmap dnm ON dnm.fknumplan = dm.pkid
     JOIN device d ON d.pkid = dnm.fkdevice
     WHERE dm.dnorpattern = '${number}' AND dm.tkpatternusage = 2`;
@@ -51,6 +51,10 @@ async function queryDevicesForNumber(cluster, number) {
   return rows.map((row) => ({
     name: row.name,
     description: typeof row.description === "string" ? row.description : null,
+    // CUCM admin's phoneEdit.do expects the bare UUID, no braces.
+    adminUrl: row.pkid
+      ? `https://${cluster.host}:8443/ccmadmin/phoneEdit.do?key=${row.pkid.replace(/[{}]/g, "")}`
+      : null,
   }));
 }
 

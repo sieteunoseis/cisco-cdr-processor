@@ -505,6 +505,41 @@ async function healthCheck(pool, incomingDir) {
   return health;
 }
 
+// Call counts per DN over 24h/7d/30d windows, counting a number in either
+// direction (calling or called). One UNION ALL query rather than N
+// per-number queries — numbers is expected to be a page of DNs (~100), not
+// an unbounded list.
+async function callCountsForNumbers(pool, numbers) {
+  if (numbers.length === 0) return {};
+  const sql = `
+    SELECT
+      number,
+      count(*) FILTER (WHERE datetimeorigination >= now() - interval '24 hours') AS last24h,
+      count(*) FILTER (WHERE datetimeorigination >= now() - interval '7 days') AS last7d,
+      count(*) FILTER (WHERE datetimeorigination >= now() - interval '30 days') AS last30d
+    FROM (
+      SELECT callingpartynumber AS number, datetimeorigination
+      FROM cdr
+      WHERE callingpartynumber = ANY($1) AND datetimeorigination >= now() - interval '30 days'
+      UNION ALL
+      SELECT finalcalledpartynumber AS number, datetimeorigination
+      FROM cdr
+      WHERE finalcalledpartynumber = ANY($1) AND datetimeorigination >= now() - interval '30 days'
+    ) x
+    GROUP BY number
+  `;
+  const result = await pool.query(sql, [numbers]);
+  const counts = {};
+  for (const row of result.rows) {
+    counts[row.number] = {
+      last24h: parseInt(row.last24h, 10),
+      last7d: parseInt(row.last7d, 10),
+      last30d: parseInt(row.last30d, 10),
+    };
+  }
+  return counts;
+}
+
 module.exports = {
   searchCdr,
   traceCdr,
@@ -512,4 +547,5 @@ module.exports = {
   statsCdr,
   healthCheck,
   parseTimeRange,
+  callCountsForNumbers,
 };

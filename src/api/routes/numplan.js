@@ -9,14 +9,16 @@ const {
   queryConfiguredNumbers,
   queryDevicesForNumber,
 } = require("../../lib/numplanAxl");
+const { callCountsForNumbers } = require("../../database/queries");
 
 const PAGE_SIZE = 100;
+const MAX_CALL_COUNT_NUMBERS = 200;
 
 function getDefaultCluster() {
   return config.axl.clusters[0] || null;
 }
 
-function createNumplanRouter() {
+function createNumplanRouter(pool) {
   const router = express.Router();
 
   router.get("/seats", async (req, res) => {
@@ -95,6 +97,33 @@ function createNumplanRouter() {
     } catch (err) {
       console.error("AXL device lookup failed:", err.message);
       res.status(502).json({ error: err.message });
+    }
+  });
+
+  router.get("/call-counts", async (req, res) => {
+    const { numbers } = req.query;
+    if (typeof numbers !== "string" || !numbers.trim()) {
+      return res.status(400).json({ error: "numbers is required" });
+    }
+    const list = numbers
+      .split(",")
+      .map((n) => n.trim())
+      .filter(Boolean);
+    if (list.length === 0) {
+      return res.status(400).json({ error: "numbers is required" });
+    }
+    if (list.length > MAX_CALL_COUNT_NUMBERS) {
+      return res.status(400).json({
+        error: `Too many numbers (max ${MAX_CALL_COUNT_NUMBERS})`,
+      });
+    }
+
+    try {
+      const counts = await callCountsForNumbers(pool, list);
+      res.json({ counts });
+    } catch (err) {
+      console.error("Call count query failed:", err.message);
+      res.status(500).json({ error: err.message });
     }
   });
 
