@@ -4,7 +4,14 @@
 -- abuse patterns instead of hardcoding pattern logic here) and long_call
 -- (per-call duration threshold, a different shape than the rate-based
 -- types).
-ALTER TABLE alert_rules DROP CONSTRAINT IF EXISTS alert_rules_type_check;
-ALTER TABLE alert_rules ADD CONSTRAINT alert_rules_type_check
-  CHECK (type IN ('volume_spike', 'failure_rate', 'label_volume', 'long_call'));
+--
+-- NOTE: this migration used to also DROP+ADD alert_rules_type_check with
+-- just the types known at the time. That's wrong for a constraint every
+-- migration in this chain re-applies on every boot (not a one-time
+-- migration) — an intermediate, narrower CHECK gets validated against
+-- whatever data already exists (e.g. a quality_degradation row from a
+-- later migration), and fails even though a subsequent migration in the
+-- same startup would have widened it again. Migration011 is the latest
+-- migration that touches this constraint and always sets the complete,
+-- current list — this one no longer touches it at all.
 ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS label_id INTEGER REFERENCES label_rules(id) ON DELETE CASCADE;
