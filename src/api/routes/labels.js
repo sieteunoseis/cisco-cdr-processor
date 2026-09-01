@@ -15,7 +15,7 @@ function validateRulePayload(body) {
   if (!body || typeof body !== "object") {
     return { valid: false, error: "Rule payload required" };
   }
-  const { label, color, fields, pattern, enabled } = body;
+  const { label, color, fields, pattern, enabled, external } = body;
 
   if (typeof label !== "string" || !label.trim()) {
     return { valid: false, error: "label is required" };
@@ -48,6 +48,7 @@ function validateRulePayload(body) {
       fields,
       pattern,
       enabled: enabled === undefined ? true : !!enabled,
+      external: !!external,
     },
   };
 }
@@ -60,6 +61,7 @@ function serializeRule(row) {
     fields: row.fields,
     pattern: row.pattern,
     enabled: row.enabled,
+    external: row.external,
     createdAt: row.created_at,
   };
 }
@@ -71,6 +73,7 @@ const DEFAULT_SEED = [
     fields: ["origDevice", "destDevice"],
     pattern: "^(ATA|AN[0-9A-F])",
     enabled: true,
+    external: false,
   },
   {
     label: "Emergency",
@@ -78,6 +81,7 @@ const DEFAULT_SEED = [
     fields: ["called"],
     pattern: "^(911|112|999|000|111)$",
     enabled: true,
+    external: false,
   },
 ];
 
@@ -101,11 +105,12 @@ function createLabelsRouter(pool) {
       return res.status(400).json({ error: validation.error });
     }
     try {
-      const { label, color, fields, pattern, enabled } = validation.rule;
+      const { label, color, fields, pattern, enabled, external } =
+        validation.rule;
       const result = await pool.query(
-        `INSERT INTO label_rules (label, color, fields, pattern, enabled)
-         VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-        [label, color, JSON.stringify(fields), pattern, enabled],
+        `INSERT INTO label_rules (label, color, fields, pattern, enabled, external)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        [label, color, JSON.stringify(fields), pattern, enabled, external],
       );
       res.status(201).json({ rule: serializeRule(result.rows[0]) });
     } catch (err) {
@@ -135,14 +140,15 @@ function createLabelsRouter(pool) {
       await client.query("BEGIN");
       for (const rule of validated) {
         await client.query(
-          `INSERT INTO label_rules (label, color, fields, pattern, enabled)
-           VALUES ($1, $2, $3, $4, $5)`,
+          `INSERT INTO label_rules (label, color, fields, pattern, enabled, external)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
           [
             rule.label,
             rule.color,
             JSON.stringify(rule.fields),
             rule.pattern,
             rule.enabled,
+            rule.external,
           ],
         );
       }
@@ -179,12 +185,13 @@ function createLabelsRouter(pool) {
       if (!validation.valid) {
         return res.status(400).json({ error: validation.error });
       }
-      const { label, color, fields, pattern, enabled } = validation.rule;
+      const { label, color, fields, pattern, enabled, external } =
+        validation.rule;
       const result = await pool.query(
         `UPDATE label_rules
-         SET label = $1, color = $2, fields = $3, pattern = $4, enabled = $5
-         WHERE id = $6 RETURNING *`,
-        [label, color, JSON.stringify(fields), pattern, enabled, id],
+         SET label = $1, color = $2, fields = $3, pattern = $4, enabled = $5, external = $6
+         WHERE id = $7 RETURNING *`,
+        [label, color, JSON.stringify(fields), pattern, enabled, external, id],
       );
       res.json({ rule: serializeRule(result.rows[0]) });
     } catch (err) {
@@ -214,14 +221,15 @@ function createLabelsRouter(pool) {
       await client.query("DELETE FROM label_rules");
       for (const rule of DEFAULT_SEED) {
         await client.query(
-          `INSERT INTO label_rules (label, color, fields, pattern, enabled)
-           VALUES ($1, $2, $3, $4, $5)`,
+          `INSERT INTO label_rules (label, color, fields, pattern, enabled, external)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
           [
             rule.label,
             rule.color,
             JSON.stringify(rule.fields),
             rule.pattern,
             rule.enabled,
+            rule.external,
           ],
         );
       }

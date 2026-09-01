@@ -68,6 +68,12 @@ async function initSchema(pool) {
     "utf8",
   );
   await pool.query(spamChecksSql);
+
+  const labelExternalSql = fs.readFileSync(
+    path.join(SQL_DIR, "Migration007_label_external.sql"),
+    "utf8",
+  );
+  await pool.query(labelExternalSql);
   console.log("Migrations applied.");
 }
 
