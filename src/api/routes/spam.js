@@ -13,6 +13,17 @@ function toE164(number) {
   return null;
 }
 
+// Short names accepted in TWILIO_SPAM_PROVIDER, resolved to Twilio's actual
+// add-on unique_name before it goes in the addOns array.
+const PROVIDER_ALIASES = {
+  nomorobo: "nomorobo_spamscore",
+  scout: "icehook_scout",
+};
+
+function resolveProviderName(name) {
+  return PROVIDER_ALIASES[name] || name;
+}
+
 // Each provider shapes its add-on result differently. Nomorobo is a binary
 // score; Scout is a graded risk score + categorical tier — "likely" and
 // "highly_likely" both count as spam here.
@@ -62,7 +73,7 @@ function createSpamRouter() {
       return res.status(503).json({ error: "Twilio is not configured" });
     }
 
-    const provider = config.twilio.spamProvider;
+    const providers = config.twilio.spamProviders.map(resolveProviderName);
 
     try {
       // API Key auth (not the main Account SID + Auth Token) — Twilio's
@@ -72,31 +83,46 @@ function createSpamRouter() {
       const client = twilio(apiKeySid, apiKeySecret, { accountSid });
       const lookup = await client.lookups.v1
         .phoneNumbers(e164)
-        .fetch({ addOns: [provider] });
+        .fetch({ addOns: providers });
 
-      const addOn = lookup.addOns?.results?.[provider];
-      if (!addOn || addOn.status !== "successful") {
-        console.error(
-          `${provider} add-on did not return successfully:`,
-          JSON.stringify(addOn),
-        );
+      const providerResults = {};
+      let isSpam = false;
+
+      for (const provider of providers) {
+        const addOn = lookup.addOns?.results?.[provider];
+        if (!addOn || addOn.status !== "successful") {
+          console.error(
+            `${provider} add-on did not return successfully:`,
+            JSON.stringify(addOn),
+          );
+          providerResults[provider] = { error: "no result" };
+          continue;
+        }
+
+        const interpreted = interpretSpamResult(provider, addOn.result);
+        if (!interpreted) {
+          console.error(
+            `Unexpected ${provider} result shape:`,
+            JSON.stringify(addOn.result),
+          );
+          providerResults[provider] = { error: "unexpected result shape" };
+          continue;
+        }
+
+        providerResults[provider] = interpreted;
+        if (interpreted.isSpam) isSpam = true;
+      }
+
+      if (Object.values(providerResults).every((r) => r.error)) {
         return res
           .status(502)
           .json({ error: "Spam check did not return a result" });
       }
 
-      const interpreted = interpretSpamResult(provider, addOn.result);
-      if (!interpreted) {
-        console.error(
-          `Unexpected ${provider} result shape:`,
-          JSON.stringify(addOn.result),
-        );
-        return res
-          .status(502)
-          .json({ error: "Spam check returned an unexpected result" });
-      }
-
-      res.json(interpreted);
+      // isSpam stays top-level (any provider flags it = spam) so existing
+      // callers that only read res.isSpam keep working unchanged; the
+      // per-provider detail (Scout's carrier data included) is additive.
+      res.json({ isSpam, providers: providerResults });
     } catch (err) {
       console.error("Twilio spam check failed:", err.message);
       res.status(502).json({ error: err.message });

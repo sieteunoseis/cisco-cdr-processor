@@ -40,10 +40,13 @@ const config = {
     accountSid: process.env.TWILIO_ACCOUNT_SID || "",
     apiKeySid: process.env.TWILIO_API_KEY_SID || "",
     apiKeySecret: process.env.TWILIO_API_KEY_SECRET || "",
-    // Which Twilio Lookup v1 add-on provides the spam signal. Both are
-    // installed on the account: nomorobo_spamscore (binary 0/1) or
-    // icehook_scout (0-99 risk_level + risk_rating tier).
-    spamProvider: process.env.TWILIO_SPAM_PROVIDER || "nomorobo_spamscore",
+    // Comma-separated list of Twilio Lookup v1 add-ons to query per spam
+    // check, e.g. "icehook_scout,nomorobo". Short aliases are resolved to
+    // their actual add-on unique_name in spam.js.
+    spamProviders: (process.env.TWILIO_SPAM_PROVIDER || "nomorobo_spamscore")
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean),
   },
   server: {
     port: parseInt(process.env.MCP_PORT || "3000", 10),
