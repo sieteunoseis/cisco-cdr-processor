@@ -7,8 +7,21 @@ const VALID_TYPES = [
   "failure_rate",
   "label_volume",
   "long_call",
+  "quality_degradation",
 ];
 const LOOKBACK_RE = /^\d+[mhdw]$/;
+
+// CMR columns for quality_degradation, joined cdr(c)/cmr(m) on
+// (globalcallid_callmanagerid, globalcallid_callid) — same join the
+// existing /cdr/quality search already uses. MOS is worse when lower;
+// jitter/latency/loss are worse when higher.
+const QUALITY_METRICS = {
+  mos: { column: "moslqk", worse: "below" },
+  jitter: { column: "jitter", worse: "above" },
+  latency: { column: "latency", worse: "above" },
+  loss: { column: "numberpacketslost", worse: "above" },
+};
+const VALID_METRICS = Object.keys(QUALITY_METRICS);
 
 // Maps a label rule's `fields` entries to the cdr columns they match
 // against — same mapping the frontend's matchLabelRules uses, kept in
@@ -24,13 +37,18 @@ const LABEL_FIELD_COLUMNS = {
 const VALID_DIRECTIONS = ["above", "below"];
 // Types whose label_id is an optional scope filter rather than a required
 // selector — volume_spike/failure_rate run org-wide unless scoped.
-const LABEL_SCOPABLE_TYPES = ["volume_spike", "failure_rate"];
+const LABEL_SCOPABLE_TYPES = [
+  "volume_spike",
+  "failure_rate",
+  "quality_degradation",
+];
 
 function validateRulePayload(body) {
   if (!body || typeof body !== "object") {
     return { valid: false, error: "Rule payload required" };
   }
-  const { name, type, window, threshold, enabled, labelId, direction } = body;
+  const { name, type, window, threshold, enabled, labelId, direction, metric } =
+    body;
 
   if (typeof name !== "string" || !name.trim()) {
     return { valid: false, error: "name is required" };
@@ -59,6 +77,16 @@ function validateRulePayload(body) {
       error: `direction must be one of: ${VALID_DIRECTIONS.join(", ")}`,
     };
   }
+  let metricVal = null;
+  if (type === "quality_degradation") {
+    metricVal = metric;
+    if (!VALID_METRICS.includes(metricVal)) {
+      return {
+        valid: false,
+        error: `metric is required for quality_degradation rules and must be one of: ${VALID_METRICS.join(", ")}`,
+      };
+    }
+  }
   let labelIdNum = null;
   if (type === "label_volume") {
     labelIdNum = Number(labelId);
@@ -86,6 +114,7 @@ function validateRulePayload(body) {
       enabled: enabled === undefined ? true : !!enabled,
       labelId: labelIdNum,
       direction: directionVal,
+      metric: metricVal,
     },
   };
 }
@@ -100,6 +129,7 @@ function serializeRule(row) {
     enabled: row.enabled,
     labelId: row.label_id ? String(row.label_id) : null,
     direction: row.direction,
+    metric: row.metric,
     createdAt: row.created_at,
   };
 }
@@ -188,6 +218,42 @@ async function evaluateRule(pool, rule) {
       current: overCount,
       baseline: total,
       value: maxDuration !== null ? Math.round(Number(maxDuration)) : null,
+    };
+  }
+
+  if (rule.type === "quality_degradation") {
+    const metricDef = QUALITY_METRICS[rule.metric];
+    const op = metricDef.worse === "below" ? "<" : ">";
+    const agg = metricDef.worse === "below" ? "MIN" : "MAX";
+    let match = null;
+    if (rule.labelId) match = await loadLabelMatchClause(pool, rule.labelId);
+    const scopeClause = match ? `AND (${match.clause})` : "";
+    const params = match ? [match.pattern] : [];
+    const result = await pool.query(
+      `
+        SELECT
+          count(*) AS total,
+          count(*) FILTER (WHERE m.${metricDef.column} ${op} ${rule.threshold}) AS bad_count,
+          ${agg}(m.${metricDef.column}) AS extreme
+        FROM cdr c
+        JOIN cmr m
+          ON c.globalcallid_callmanagerid = m.globalcallid_callmanagerid
+          AND c.globalcallid_callid = m.globalcallid_callid
+        WHERE c.datetimeorigination >= now() - interval '${interval}'
+          ${scopeClause}
+      `,
+      params,
+    );
+    const total = parseInt(result.rows[0].total, 10);
+    const badCount = parseInt(result.rows[0].bad_count, 10);
+    const extreme = result.rows[0].extreme;
+    return {
+      ...rule,
+      triggered: badCount > 0,
+      current: badCount,
+      baseline: total,
+      value: extreme !== null ? Number(extreme) : null,
+      labelName: match ? match.label : null,
     };
   }
 
@@ -372,12 +438,20 @@ function createAlertsRouter(pool) {
       return res.status(400).json({ error: validation.error });
     }
     try {
-      const { name, type, window, threshold, enabled, labelId, direction } =
-        validation.rule;
+      const {
+        name,
+        type,
+        window,
+        threshold,
+        enabled,
+        labelId,
+        direction,
+        metric,
+      } = validation.rule;
       const result = await pool.query(
-        `INSERT INTO alert_rules (name, type, lookback, threshold, enabled, label_id, direction)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-        [name, type, window, threshold, enabled, labelId, direction],
+        `INSERT INTO alert_rules (name, type, lookback, threshold, enabled, label_id, direction, metric)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+        [name, type, window, threshold, enabled, labelId, direction, metric],
       );
       res.status(201).json({ rule: serializeRule(result.rows[0]) });
     } catch (err) {
@@ -401,13 +475,21 @@ function createAlertsRouter(pool) {
       if (!validation.valid) {
         return res.status(400).json({ error: validation.error });
       }
-      const { name, type, window, threshold, enabled, labelId, direction } =
-        validation.rule;
+      const {
+        name,
+        type,
+        window,
+        threshold,
+        enabled,
+        labelId,
+        direction,
+        metric,
+      } = validation.rule;
       const result = await pool.query(
         `UPDATE alert_rules
-         SET name = $1, type = $2, lookback = $3, threshold = $4, enabled = $5, label_id = $6, direction = $7
-         WHERE id = $8 RETURNING *`,
-        [name, type, window, threshold, enabled, labelId, direction, id],
+         SET name = $1, type = $2, lookback = $3, threshold = $4, enabled = $5, label_id = $6, direction = $7, metric = $8
+         WHERE id = $9 RETURNING *`,
+        [name, type, window, threshold, enabled, labelId, direction, metric, id],
       );
       res.json({ rule: serializeRule(result.rows[0]) });
     } catch (err) {
@@ -472,6 +554,42 @@ function createAlertsRouter(pool) {
         if (!labelMatch && rule.type === "label_volume") {
           return res.json({ byCalling: [], byCalled: [] });
         }
+      }
+
+      if (rule.type === "quality_degradation") {
+        const metricDef = QUALITY_METRICS[rule.metric];
+        const op = metricDef.worse === "below" ? "<" : ">";
+        const order = metricDef.worse === "below" ? "ASC" : "DESC";
+        const scopeClause = labelMatch ? `AND (${labelMatch.clause})` : "";
+        const params = labelMatch ? [labelMatch.pattern] : [];
+        const result = await pool.query(
+          `
+            SELECT
+              c.callingpartynumber, c.finalcalledpartynumber,
+              m.${metricDef.column} AS metric_value,
+              c.datetimeorigination, c.globalcallid_callid, c.globalcallid_callmanagerid
+            FROM cdr c
+            JOIN cmr m
+              ON c.globalcallid_callmanagerid = m.globalcallid_callmanagerid
+              AND c.globalcallid_callid = m.globalcallid_callid
+            WHERE c.datetimeorigination >= now() - interval '${interval}'
+              AND m.${metricDef.column} ${op} ${rule.threshold}
+              ${scopeClause}
+            ORDER BY m.${metricDef.column} ${order}
+            LIMIT 10
+          `,
+          params,
+        );
+        return res.json({
+          calls: result.rows.map((r) => ({
+            callingNumber: r.callingpartynumber,
+            calledNumber: r.finalcalledpartynumber,
+            metricValue: Number(r.metric_value),
+            datetimeOrigination: r.datetimeorigination,
+            callId: String(r.globalcallid_callid),
+            callManagerId: String(r.globalcallid_callmanagerid),
+          })),
+        });
       }
 
       const [byCalling, byCalled] = await Promise.all([
