@@ -22,12 +22,16 @@ async function queryConfiguredNumbers(cluster, numbers) {
     cluster.password,
     cluster.version,
   );
-  const sql = `SELECT dnorpattern, description FROM numplan WHERE dnorpattern IN (${quoted})`;
+  const sql = `SELECT dnorpattern, description FROM numplan WHERE dnorpattern IN (${quoted}) AND tkpatternusage = 2`;
   const response = await service.executeSqlQuery(sql);
-  const rows = Array.isArray(response) ? response : response?.row || [];
+  const raw = Array.isArray(response) ? response : response?.row || [];
+  const rows = Array.isArray(raw) ? raw : [raw];
   const found = new Map();
   for (const row of rows) {
-    found.set(row.dnorpattern, row.description || null);
+    found.set(
+      row.dnorpattern,
+      typeof row.description === "string" ? row.description : null,
+    );
   }
   return found;
 }
@@ -47,16 +51,21 @@ function createNumplanRouter() {
         .json({ error: "page must be a positive integer" });
     }
 
-    const resolved = resolvePatternRange(pattern);
-    if (!resolved) {
+    let resolved;
+    let allMatches;
+    try {
+      resolved = resolvePatternRange(pattern);
+      if (!resolved) {
+        return res.json({ eligible: false });
+      }
+      allMatches = enumerateMatches(pattern, resolved.prefix, resolved.width);
+    } catch {
+      // Pattern doesn't compile as a regex, or is too deeply nested for the
+      // tokenizer's recursion — either way, it isn't a resolvable fixed-width
+      // number range.
       return res.json({ eligible: false });
     }
 
-    const allMatches = enumerateMatches(
-      pattern,
-      resolved.prefix,
-      resolved.width,
-    );
     const totalCount = allMatches.length;
     const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
     const clampedPage = Math.min(Math.max(pageNum, 1), totalPages);
@@ -83,6 +92,7 @@ function createNumplanRouter() {
         seats,
       });
     } catch (err) {
+      console.error("AXL numplan query failed:", err.message);
       res.status(502).json({ error: err.message });
     }
   });
