@@ -1,10 +1,12 @@
-# cisco-cucm-cdr
+# cisco-cdr-processor
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Docker Hub](https://img.shields.io/docker/v/sieteunoseis/cisco-cucm-cdr?label=Docker%20Hub)](https://hub.docker.com/r/sieteunoseis/cisco-cucm-cdr)
-[![Docker Pulls](https://img.shields.io/docker/pulls/sieteunoseis/cisco-cucm-cdr)](https://hub.docker.com/r/sieteunoseis/cisco-cucm-cdr)
+[![Docker Build & Publish](https://github.com/sieteunoseis/cisco-cdr-processor/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/sieteunoseis/cisco-cdr-processor/actions)
+[![GHCR](https://img.shields.io/badge/GHCR-ghcr.io%2Fsieteunoseis%2Fcisco--cdr--processor-blue)](https://github.com/sieteunoseis/cisco-cdr-processor/pkgs/container/cisco-cdr-processor)
 
 A Dockerized Node.js application that collects, parses, enriches, and stores Cisco Unified Communications Manager (CUCM) Call Detail Records (CDR) and Call Management Records (CMR). Compatible with CUCM 12.x through 15.x.
+
+> Pairs with [cisco-cdr-ui](https://github.com/sieteunoseis/cisco-cdr-ui), an optional web dashboard for searching and analyzing the data this app collects.
 
 ## What It Does
 
@@ -17,6 +19,10 @@ A Dockerized Node.js application that collects, parses, enriches, and stores Cis
 7. Exposes a REST API for dashboards and integrations
 8. Auto-detects fresh vs. existing database and runs idempotent migrations on every startup
 9. Daily retention purge (configurable, default 90 days)
+10. Optional Twilio Lookup spam/carrier check (Nomorobo, IceHook Scout, or both) with server-side result caching
+11. Shared, DB-backed label rules for classifying calls (regex over calling/called number or device name)
+12. DN Map — walks a label's number range against CUCM's AXL `numplan`/`device` tables to show configured vs. unconfigured DNs, assigned devices, and recent call volume
+13. Starred calls and per-call diagnostic snapshots (RISPort, phone logs, CDP, config) for incident follow-up
 
 ## Architecture
 
@@ -90,8 +96,17 @@ curl http://localhost:3000/health
 | `CDR_RETENTION_DAYS` | `90`                                                      | Days to retain CDR/CMR data            |
 | `MCP_PORT`           | `3000`                                                    | Port for MCP + REST API server         |
 | `LOG_LEVEL`          | `info`                                                    | Log level (`info`, `debug`)            |
+| `CORS_ORIGIN`        | `*`                                                       | Allowed origin for the REST API (set to your dashboard's URL) |
 | `POSTGRES_PASSWORD`  | `cdr_password`                                            | Postgres password (compose only)       |
 | `POSTGRES_PORT`      | `5432`                                                    | Postgres exposed port (compose only)   |
+| `TWILIO_ACCOUNT_SID` | (none)                                                    | Twilio Account SID — enables spam/carrier check |
+| `TWILIO_API_KEY_SID` | (none)                                                    | Twilio API Key SID                     |
+| `TWILIO_API_KEY_SECRET` | (none)                                                 | Twilio API Key Secret                  |
+| `TWILIO_SPAM_PROVIDER` | `nomorobo_spamscore`                                    | Comma-separated Lookup v1 add-ons to query (`nomorobo`, `scout`, or both) |
+
+### Spam / Carrier Check (Twilio)
+
+Optional. If `TWILIO_ACCOUNT_SID` and API key credentials are set, `POST /api/v1/spam/check` looks up a number via Twilio Lookup v1 add-ons and caches the result (`GET /api/v1/spam/checked`) so repeat checks don't re-spend add-on credits. `TWILIO_SPAM_PROVIDER` accepts a comma-separated list — e.g. `icehook_scout,nomorobo` — and a number is flagged spam if *any* configured provider flags it. IceHook Scout additionally returns carrier, line type, porting, and geo/LATA/OCN data, which is surfaced in full alongside the spam verdict.
 
 ### Multi-Cluster AXL Enrichment
 
@@ -103,14 +118,14 @@ AXL_HOST_1=cucm-pub1.example.com
 AXL_USERNAME_1=axl-user
 AXL_PASSWORD_1=axl-password
 AXL_VERSION_1=15.0
-AXL_CLUSTER_ID_1=ohsuCUCMprod
+AXL_CLUSTER_ID_1=cucmProdCluster
 
 # Cluster 2
 AXL_HOST_2=cucm-pub2.example.com
 AXL_USERNAME_2=axl-user
 AXL_PASSWORD_2=axl-password
 AXL_VERSION_2=14.0
-AXL_CLUSTER_ID_2=cucmOHSUtest
+AXL_CLUSTER_ID_2=cucmTestCluster
 ```
 
 Enrichment is optional. If no `AXL_HOST_*` variables are set, the processor skips enrichment and stores raw CDR/CMR data. Enrichment results are cached in PostgreSQL (default 24 hours) to minimize AXL queries.
@@ -135,16 +150,74 @@ Note: CUCM hardcodes port 22 for SFTP — there is no port field in the UI.
 
 Base URL: `http://localhost:3000`
 
-| Endpoint                                             | Description                                             |
-| ---------------------------------------------------- | ------------------------------------------------------- |
-| `GET /api/v1/cdr/search?caller=5033466520&last=24h`  | Search CDR by caller, callee, device, cause, time range |
-| `GET /api/v1/cdr/trace/:callId`                      | Full call trace with CDR + CMR records                  |
-| `GET /api/v1/cdr/quality?mos_below=3.5&last=7d`      | Find poor-quality calls by MOS threshold                |
-| `GET /api/v1/cdr/stats/volume?interval=hour&last=7d` | Call volume over time                                   |
-| `GET /api/v1/cdr/stats/top-callers?last=1d&limit=10` | Top callers by call count                               |
-| `GET /api/v1/cdr/stats/by-cause?last=7d`             | Call counts grouped by disconnect cause                 |
-| `GET /api/v1/cdr/stats/by-device?last=7d`            | Call counts grouped by device                           |
-| `GET /health`                                        | Health check — database stats, file processing activity |
+### CDR
+
+| Endpoint                                              | Description                                              |
+| ------------------------------------------------------ | --------------------------------------------------------|
+| `GET /api/v1/cdr/search?caller=5033466520&last=24h`   | Search CDR by caller, callee, device, cause, time range   |
+| `GET /api/v1/cdr/trace/:callId`                       | Full call trace with CDR + CMR records                    |
+| `GET /api/v1/cdr/quality?mos_below=3.5&last=7d`       | Find poor-quality calls by MOS threshold                  |
+| `GET /api/v1/cdr/related/:callId`                     | Other calls sharing the same parties/devices                |
+| `GET /api/v1/cdr/stats/:type`                         | Aggregate stats — `volume`, `top_callers`, `top_called`, `by_cause`, `by_device`, `by_location` |
+| `POST /api/v1/cdr/sql`                                | Read-only ad-hoc SQL query execution                        |
+| `GET /api/v1/cdr/sql/schema`                          | Table/column reference for the SQL editor                    |
+| `POST /api/v1/cdr/logs/collect`                       | Collect SDL/SDI traces via DIME for a call                    |
+| `POST /api/v1/cdr/logs/sip-ladder`                    | Kick off SIP ladder trace collection (async job)                |
+| `GET /api/v1/cdr/logs/sip-ladder/status/:jobId`       | Poll a SIP ladder collection job                                  |
+
+### Labels
+
+| Endpoint                     | Description                                             |
+| ------------------------------ | -------------------------------------------------------- |
+| `GET /api/v1/labels`          | List shared label rules                                   |
+| `POST /api/v1/labels`         | Create a label rule                                        |
+| `POST /api/v1/labels/bulk`    | Import multiple label rules at once                          |
+| `PUT /api/v1/labels/:id`      | Update a label rule                                            |
+| `DELETE /api/v1/labels/:id`   | Delete a label rule                                              |
+| `POST /api/v1/labels/reset`   | Reset to the built-in default rules                                |
+
+### DN Map (numplan)
+
+| Endpoint                                          | Description                                                        |
+| ---------------------------------------------------- | -------------------------------------------------------------------|
+| `GET /api/v1/numplan/seats?pattern=...&page=1`      | Resolve a label pattern to a fixed-width number range and page through configured/unconfigured DNs |
+| `GET /api/v1/numplan/devices?number=...`            | Devices assigned to a DN, each with a CUCM admin `phoneEdit.do` link |
+| `GET /api/v1/numplan/call-counts?numbers=a,b,c`     | 24h/7d/30d call volume per DN (calling or called)                     |
+
+### Spam / Carrier Check
+
+| Endpoint                                  | Description                                             |
+| -------------------------------------------- | -------------------------------------------------------- |
+| `GET /api/v1/spam/checked?numbers=a,b,c`   | Batch cache lookup for previously-checked numbers           |
+| `POST /api/v1/spam/check`                  | Query configured Twilio Lookup add-ons for a number and cache the result |
+
+### Devices
+
+| Endpoint                                    | Description                                             |
+| ----------------------------------------------- | -------------------------------------------------------- |
+| `POST /api/v1/device/batch`                    | Batch RISPort device status lookup                         |
+| `GET /api/v1/device/:deviceName`               | Device status/network/config detail                           |
+| `GET /api/v1/device/:deviceName/logs`          | Available syslog files for a device                              |
+| `GET /api/v1/device/:deviceName/web/:page`     | Scraped phone web page (network, config, status, syslog)          |
+
+### Starred Calls & Snapshots
+
+| Endpoint                                            | Description                                             |
+| -------------------------------------------------------- | -------------------------------------------------------- |
+| `GET /api/v1/starred`                                   | List starred calls                                         |
+| `POST /api/v1/starred/check`                            | Batch-check which of a list of calls are starred              |
+| `GET /api/v1/starred/:callId/:callManagerId`            | Check if a specific call is starred                              |
+| `POST /api/v1/starred/:callId/:callManagerId`           | Star a call                                                        |
+| `DELETE /api/v1/starred/:callId/:callManagerId`         | Unstar a call                                                        |
+| `GET /api/v1/snapshots/:callId/:cmId`                   | List snapshots for a call                                              |
+| `POST /api/v1/snapshots/:callId/:cmId`                  | Take a diagnostic snapshot (RISPort, phone logs, CDP, config)             |
+| `GET /api/v1/snapshots/:callId/:cmId/:type`             | Retrieve one snapshot's stored data                                        |
+
+### Health
+
+| Endpoint       | Description                                              |
+| -------------- | ---------------------------------------------------------|
+| `GET /health`  | Health check — database stats, file processing activity  |
 
 ## MCP Server (AI Agent Access)
 
@@ -159,6 +232,7 @@ The application exposes a [Model Context Protocol](https://modelcontextprotocol.
 | `cdr_quality` | Find poor-quality calls by MOS, jitter, latency, packet loss |
 | `cdr_stats`   | Call volume, top callers/called, by cause/device/location    |
 | `cdr_health`  | Database stats, file processing activity, cache status       |
+| `numplan_find_available` | Find unconfigured DNs within a labeled number-bank range |
 
 ### Claude Code Configuration
 
@@ -211,6 +285,10 @@ No manual migration steps are required.
 | -------------------------------- | ---------------------------------------------- |
 | `docker-compose.yml`             | Lab/dev — includes bundled Postgres            |
 | `docker-compose.external-db.yml` | Production — processor only, external Postgres |
+
+## Related Projects
+
+[cisco-cdr-ui](https://github.com/sieteunoseis/cisco-cdr-ui) — an optional web dashboard that consumes this app's REST API for searching, call detail, SQL querying, the DN Map, and spam checks. Point its `API_URL` at this app's base URL and enable CORS (`CORS_ORIGIN`) to use it.
 
 ## Support
 
