@@ -7,6 +7,7 @@ const { createStarredRouter } = require("./routes/starred");
 const { createDeviceRouter } = require("./routes/device");
 const { createSnapshotsRouter } = require("./routes/snapshots");
 const { createLabelsRouter } = require("./routes/labels");
+const { createNumplanRouter } = require("./routes/numplan");
 
 function createRestServer(pool) {
   const app = express();
@@ -32,6 +33,7 @@ function createRestServer(pool) {
   app.use("/api/v1/device", createDeviceRouter());
   app.use("/api/v1/snapshots", createSnapshotsRouter(pool));
   app.use("/api/v1/labels", createLabelsRouter(pool));
+  app.use("/api/v1/numplan", createNumplanRouter());
 
   // 404 fallback for unknown API routes
   app.use("/api", (req, res) => {
