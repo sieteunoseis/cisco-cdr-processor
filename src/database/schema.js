@@ -98,6 +98,12 @@ async function initSchema(pool) {
     "utf8",
   );
   await pool.query(alertQualitySql);
+
+  const savedQueriesSql = fs.readFileSync(
+    path.join(SQL_DIR, "Migration012_saved_queries.sql"),
+    "utf8",
+  );
+  await pool.query(savedQueriesSql);
   console.log("Migrations applied.");
 }
 
