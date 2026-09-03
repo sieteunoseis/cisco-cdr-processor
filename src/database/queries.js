@@ -9,6 +9,16 @@ function parseTimeRange(last) {
   return `${num} ${units[unit] || "hours"}`;
 }
 
+// Matches alerts.js's LABEL_FIELD_COLUMNS — kept as a separate copy here
+// rather than a shared import since routes/ and database/ don't otherwise
+// depend on each other.
+const LABEL_FIELD_COLUMNS = {
+  calling: "callingpartynumber",
+  called: "finalcalledpartynumber",
+  origDevice: "origdevicename",
+  destDevice: "destdevicename",
+};
+
 // Enrichment columns to include in SELECT
 const ENRICHMENT_COLS = `
   c.orig_device_description,
@@ -38,6 +48,7 @@ async function searchCdr(pool, params) {
     last,
     start,
     end,
+    labelIds,
     limit = 100,
   } = params;
 
@@ -76,6 +87,34 @@ async function searchCdr(pool, params) {
     );
     values.push(parseInt(cause, 10));
     idx++;
+  }
+  if (labelIds) {
+    const ids = labelIds
+      .split(",")
+      .map((s) => parseInt(s, 10))
+      .filter(Number.isInteger);
+    if (ids.length > 0) {
+      const labelResult = await pool.query(
+        "SELECT fields, pattern FROM label_rules WHERE id = ANY($1) AND enabled",
+        [ids],
+      );
+      const orClauses = [];
+      for (const row of labelResult.rows) {
+        const columns = row.fields
+          .map((f) => LABEL_FIELD_COLUMNS[f])
+          .filter(Boolean);
+        if (columns.length === 0) continue;
+        orClauses.push(
+          `(${columns.map((c) => `c.${c} ~* $${idx}`).join(" OR ")})`,
+        );
+        values.push(row.pattern);
+        idx++;
+      }
+      // Selecting labels that turn out to have no matchable fields (or
+      // that no longer exist) narrows to zero rows rather than silently
+      // falling back to unfiltered results.
+      conditions.push(orClauses.length > 0 ? `(${orClauses.join(" OR ")})` : "false");
+    }
   }
   if (start) {
     conditions.push(`c.datetimeorigination >= $${idx++}`);
