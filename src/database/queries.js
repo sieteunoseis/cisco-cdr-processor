@@ -65,7 +65,7 @@ async function searchCdr(pool, params) {
   }
   if (device) {
     conditions.push(
-      `(c.origdevicename LIKE $${idx} OR c.destdevicename LIKE $${idx})`,
+      `(c.origdevicename ILIKE $${idx} OR c.destdevicename ILIKE $${idx})`,
     );
     values.push(`%${device}%`);
     idx++;
