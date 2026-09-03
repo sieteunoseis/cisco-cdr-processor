@@ -1,0 +1,907 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_POSTGRESQL}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.2.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_POSTGRESQL}"
+          },
+          "format": "time_series",
+          "rawSql": "SELECT time, metric, \"Calls\" FROM (\n  SELECT\n    $__timeGroup(c.datetimeorigination, '1h') AS time,\n    'Total' AS metric,\n    count(*) AS \"Calls\"\n  FROM cdr c\n  WHERE $__timeFilter(c.datetimeorigination)\n    AND (\n      '__all__' = ANY(string_to_array('${label:csv}', ','))\n      OR EXISTS (\n        SELECT 1 FROM label_rules lr\n        WHERE lr.label = ANY(string_to_array('${label:csv}', ',')) AND lr.enabled\n          AND (\n            (lr.fields ? 'calling' AND c.callingpartynumber ~* lr.pattern)\n            OR (lr.fields ? 'called' AND c.finalcalledpartynumber ~* lr.pattern)\n            OR (lr.fields ? 'origDevice' AND c.origdevicename ~* lr.pattern)\n            OR (lr.fields ? 'destDevice' AND c.destdevicename ~* lr.pattern)\n          )\n      )\n    )\n  GROUP BY 1\n\n  UNION ALL\n\n  SELECT\n    $__timeGroup(c.datetimeorigination, '1h') AS time,\n    lr.label AS metric,\n    count(*) AS \"Calls\"\n  FROM cdr c\n  JOIN label_rules lr ON lr.enabled AND lr.label = ANY(string_to_array('${label:csv}', ','))\n    AND (\n      (lr.fields ? 'calling' AND c.callingpartynumber ~* lr.pattern)\n      OR (lr.fields ? 'called' AND c.finalcalledpartynumber ~* lr.pattern)\n      OR (lr.fields ? 'origDevice' AND c.origdevicename ~* lr.pattern)\n      OR (lr.fields ? 'destDevice' AND c.destdevicename ~* lr.pattern)\n    )\n  WHERE $__timeFilter(c.datetimeorigination)\n  GROUP BY 1, 2\n) x\nORDER BY time",
+          "refId": "A"
+        }
+      ],
+      "title": "Call Volume",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_POSTGRESQL}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 20
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 6,
+        "x": 0,
+        "y": 9
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "13.2.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_POSTGRESQL}"
+          },
+          "format": "table",
+          "rawSql": "SELECT\n  round(\n    100.0 * sum(CASE WHEN c.destcause_value != 16 THEN 1 ELSE 0 END) / NULLIF(count(*), 0),\n    2\n  ) AS \"Failure Rate\"\nFROM cdr c\nWHERE $__timeFilter(c.datetimeorigination)\n  AND (\n    '__all__' = ANY(string_to_array('${label:csv}', ','))\n    OR EXISTS (\n      SELECT 1 FROM label_rules lr\n      WHERE lr.label = ANY(string_to_array('${label:csv}', ',')) AND lr.enabled\n        AND (\n          (lr.fields ? 'calling' AND c.callingpartynumber ~* lr.pattern)\n          OR (lr.fields ? 'called' AND c.finalcalledpartynumber ~* lr.pattern)\n          OR (lr.fields ? 'origDevice' AND c.origdevicename ~* lr.pattern)\n          OR (lr.fields ? 'destDevice' AND c.destdevicename ~* lr.pattern)\n        )\n    )\n  )",
+          "refId": "A"
+        }
+      ],
+      "title": "Failure Rate",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_POSTGRESQL}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "links": [
+            {
+              "targetBlank": true,
+              "title": "Search this number in CDR",
+              "url": "${cdr_ui_url}/?q=${__field.name}"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 9,
+        "x": 15,
+        "y": 9
+      },
+      "id": 3,
+      "options": {
+        "displayMode": "basic",
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "maxVizHeight": 300,
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "namePlacement": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [],
+          "fields": "",
+          "values": true
+        },
+        "showUnfilled": true,
+        "sizing": "auto",
+        "valueMode": "color"
+      },
+      "pluginVersion": "13.2.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_POSTGRESQL}"
+          },
+          "format": "table",
+          "rawSql": "SELECT\n  c.finalcalledpartynumber AS \"Destination\",\n  count(*) AS \"Calls\"\nFROM cdr c\nWHERE $__timeFilter(c.datetimeorigination)\n  AND c.finalcalledpartynumber IS NOT NULL\n  AND (\n    '__all__' = ANY(string_to_array('${label:csv}', ','))\n    OR EXISTS (\n      SELECT 1 FROM label_rules lr\n      WHERE lr.label = ANY(string_to_array('${label:csv}', ',')) AND lr.enabled\n        AND (\n          (lr.fields ? 'calling' AND c.callingpartynumber ~* lr.pattern)\n          OR (lr.fields ? 'called' AND c.finalcalledpartynumber ~* lr.pattern)\n          OR (lr.fields ? 'origDevice' AND c.origdevicename ~* lr.pattern)\n          OR (lr.fields ? 'destDevice' AND c.destdevicename ~* lr.pattern)\n        )\n    )\n  )\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT 15",
+          "refId": "A"
+        }
+      ],
+      "title": "Top Called",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_POSTGRESQL}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "max": 5,
+          "min": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red"
+              },
+              {
+                "color": "green",
+                "value": 3.5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "id": 4,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.2.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_POSTGRESQL}"
+          },
+          "format": "time_series",
+          "rawSql": "SELECT\n  $__timeGroup(c.datetimeorigination, '1h') AS time,\n  avg(m.moslqk) AS \"Avg MOS\"\nFROM cdr c\nJOIN cmr m ON m.globalcallid_callmanagerid = c.globalcallid_callmanagerid AND m.globalcallid_callid = c.globalcallid_callid\nWHERE $__timeFilter(c.datetimeorigination)\n  AND m.numberpacketssent >= 50 AND m.moslqk > 0\n  AND (\n    '__all__' = ANY(string_to_array('${label:csv}', ','))\n    OR EXISTS (\n      SELECT 1 FROM label_rules lr\n      WHERE lr.label = ANY(string_to_array('${label:csv}', ',')) AND lr.enabled\n        AND (\n          (lr.fields ? 'calling' AND c.callingpartynumber ~* lr.pattern)\n          OR (lr.fields ? 'called' AND c.finalcalledpartynumber ~* lr.pattern)\n          OR (lr.fields ? 'origDevice' AND c.origdevicename ~* lr.pattern)\n          OR (lr.fields ? 'destDevice' AND c.destdevicename ~* lr.pattern)\n        )\n    )\n  )\nGROUP BY 1\nORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "MOS Trend",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_POSTGRESQL}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "#73BF69",
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "id": 5,
+      "options": {
+        "displayLabels": [
+          "percent"
+        ],
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "pieType": "pie",
+        "reduceOptions": {
+          "calcs": [],
+          "fields": "",
+          "values": true
+        },
+        "sort": "desc",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.2.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_POSTGRESQL}"
+          },
+          "format": "table",
+          "rawSql": "SELECT codec AS \"Codec\", count(*) AS \"Calls\"\nFROM (\n  SELECT c.origcodec AS codec\n  FROM cdr_augmented c\n  WHERE $__timeFilter(c.datetimeorigination)\n    AND (\n      '__all__' = ANY(string_to_array('${label:csv}', ','))\n      OR EXISTS (\n        SELECT 1 FROM label_rules lr\n        WHERE lr.label = ANY(string_to_array('${label:csv}', ',')) AND lr.enabled\n          AND (\n            (lr.fields ? 'calling' AND c.callingpartynumber ~* lr.pattern)\n            OR (lr.fields ? 'called' AND c.finalcalledpartynumber ~* lr.pattern)\n            OR (lr.fields ? 'origDevice' AND c.origdevicename ~* lr.pattern)\n            OR (lr.fields ? 'destDevice' AND c.destdevicename ~* lr.pattern)\n          )\n      )\n    )\n  UNION ALL\n  SELECT c.destcodec AS codec\n  FROM cdr_augmented c\n  WHERE $__timeFilter(c.datetimeorigination)\n    AND (\n      '__all__' = ANY(string_to_array('${label:csv}', ','))\n      OR EXISTS (\n        SELECT 1 FROM label_rules lr\n        WHERE lr.label = ANY(string_to_array('${label:csv}', ',')) AND lr.enabled\n          AND (\n            (lr.fields ? 'calling' AND c.callingpartynumber ~* lr.pattern)\n            OR (lr.fields ? 'called' AND c.finalcalledpartynumber ~* lr.pattern)\n            OR (lr.fields ? 'origDevice' AND c.origdevicename ~* lr.pattern)\n            OR (lr.fields ? 'destDevice' AND c.destdevicename ~* lr.pattern)\n          )\n      )\n    )\n) x\nWHERE codec IS NOT NULL\nGROUP BY 1\nORDER BY 2 DESC",
+          "refId": "A"
+        }
+      ],
+      "title": "Codec Distribution",
+      "type": "piechart"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_POSTGRESQL}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 27
+      },
+      "id": 6,
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Device"
+          }
+        ]
+      },
+      "pluginVersion": "13.2.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_POSTGRESQL}"
+          },
+          "format": "table",
+          "rawSql": "SELECT ca.localdevicename AS \"Device\", ca.remotedevicename AS \"Remote Device\", ca.datetimestamp AS \"Time\", ca.moslqk AS \"MOS\", ca.jitter AS \"Jitter\", ca.latency AS \"Latency\"\nFROM cmr_augmented ca\nWHERE $__timeFilter(ca.datetimestamp)\n  AND (\n    '__all__' = ANY(string_to_array('${label:csv}', ','))\n    OR EXISTS (\n      SELECT 1 FROM label_rules lr\n      WHERE lr.label = ANY(string_to_array('${label:csv}', ',')) AND lr.enabled\n        AND (lr.fields ? 'origDevice' OR lr.fields ? 'destDevice')\n        AND (ca.localdevicename ~* lr.pattern OR ca.remotedevicename ~* lr.pattern)\n    )\n  )\nORDER BY ca.datetimestamp DESC\nLIMIT 200",
+          "refId": "A"
+        }
+      ],
+      "title": "Device Quality by Label",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_POSTGRESQL}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 36
+      },
+      "id": 7,
+      "pluginVersion": "",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_POSTGRESQL}"
+          },
+          "format": "table",
+          "rawSql": "SELECT ar.name AS \"Name\", ar.type AS \"Type\", ar.lookback AS \"Window\", ar.threshold AS \"Threshold\", ar.direction AS \"Direction\", ar.metric AS \"Metric\", lr.label AS \"Label Scope\", ar.enabled AS \"Enabled\"\nFROM alert_rules ar\nLEFT JOIN label_rules lr ON lr.id = ar.label_id\nORDER BY ar.type",
+          "refId": "A"
+        }
+      ],
+      "title": "Alert Rules",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_POSTGRESQL}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 36
+      },
+      "id": 8,
+      "pluginVersion": "",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_POSTGRESQL}"
+          },
+          "format": "time_series",
+          "rawSql": "SELECT\n  $__timeGroup(c.datetimeorigination, '1h') AS time,\n  count(*) AS \"Long Calls\"\nFROM cdr c\nWHERE $__timeFilter(c.datetimeorigination)\n  AND EXTRACT(EPOCH FROM c.duration) > (SELECT threshold FROM alert_rules WHERE type = 'long_call' AND enabled ORDER BY id LIMIT 1)\nGROUP BY 1\nORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "Long Calls (over threshold)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_POSTGRESQL}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 2
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 44
+      },
+      "id": 9,
+      "pluginVersion": "",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_POSTGRESQL}"
+          },
+          "format": "time_series",
+          "rawSql": "WITH hourly AS (\n  SELECT date_trunc('hour', c.datetimeorigination) AS hour, count(*) AS calls\n  FROM cdr c\n  WHERE c.datetimeorigination >= $__timeFrom()::timestamp - interval '1 hour'\n    AND c.datetimeorigination <= $__timeTo()::timestamp\n  GROUP BY 1\n)\nSELECT\n  hour AS time,\n  round((calls::numeric / NULLIF(lag(calls) OVER (ORDER BY hour), 0)), 2) AS \"Ratio vs Prior Hour\"\nFROM hourly\nWHERE hour >= $__timeFrom()::timestamp\nORDER BY hour",
+          "refId": "A"
+        }
+      ],
+      "title": "Volume Spike Ratio (vs prior hour)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_POSTGRESQL}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 52
+      },
+      "id": 10,
+      "pluginVersion": "",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_POSTGRESQL}"
+          },
+          "format": "table",
+          "rawSql": "SELECT c.destcause AS \"Cause\", count(*) AS \"Calls\"\nFROM cdr_augmented c\nWHERE $__timeFilter(c.datetimeorigination)\n  AND c.destcause_value != 16\n  AND (\n    '__all__' = ANY(string_to_array('${label:csv}', ','))\n    OR EXISTS (\n      SELECT 1 FROM label_rules lr\n      WHERE lr.label = ANY(string_to_array('${label:csv}', ',')) AND lr.enabled\n        AND (\n          (lr.fields ? 'calling' AND c.callingpartynumber ~* lr.pattern)\n          OR (lr.fields ? 'called' AND c.finalcalledpartynumber ~* lr.pattern)\n          OR (lr.fields ? 'origDevice' AND c.origdevicename ~* lr.pattern)\n          OR (lr.fields ? 'destDevice' AND c.destdevicename ~* lr.pattern)\n        )\n    )\n  )\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT 15",
+          "refId": "A"
+        }
+      ],
+      "title": "Failure Rate by Cause Code",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_POSTGRESQL}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "links": [
+            {
+              "targetBlank": true,
+              "title": "Search this number in CDR",
+              "url": "${cdr_ui_url}/?q=${__field.name}"
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 9,
+        "x": 6,
+        "y": 9
+      },
+      "id": 11,
+      "options": {
+        "displayMode": "basic",
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "maxVizHeight": 300,
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "namePlacement": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [],
+          "fields": "",
+          "values": true
+        },
+        "showUnfilled": true,
+        "sizing": "auto",
+        "valueMode": "color"
+      },
+      "pluginVersion": "",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_POSTGRESQL}"
+          },
+          "format": "table",
+          "rawSql": "SELECT c.callingpartynumber AS \"Caller\", count(*) AS \"Calls\"\nFROM cdr c\nWHERE $__timeFilter(c.datetimeorigination)\n  AND c.callingpartynumber IS NOT NULL\n  AND (\n    '__all__' = ANY(string_to_array('${label:csv}', ','))\n    OR EXISTS (\n      SELECT 1 FROM label_rules lr\n      WHERE lr.label = ANY(string_to_array('${label:csv}', ',')) AND lr.enabled\n        AND (\n          (lr.fields ? 'calling' AND c.callingpartynumber ~* lr.pattern)\n          OR (lr.fields ? 'called' AND c.finalcalledpartynumber ~* lr.pattern)\n          OR (lr.fields ? 'origDevice' AND c.origdevicename ~* lr.pattern)\n          OR (lr.fields ? 'destDevice' AND c.destdevicename ~* lr.pattern)\n        )\n    )\n  )\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT 15",
+          "refId": "A"
+        }
+      ],
+      "title": "Top Calling",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_POSTGRESQL}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 60
+      },
+      "id": 12,
+      "pluginVersion": "",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_POSTGRESQL}"
+          },
+          "format": "time_series",
+          "rawSql": "SELECT $__timeGroup(c.datetimeorigination, '1h') AS time, avg(m.jitter) AS \"Avg Jitter (ms)\"\nFROM cdr c\nJOIN cmr m ON m.globalcallid_callmanagerid=c.globalcallid_callmanagerid AND m.globalcallid_callid=c.globalcallid_callid\nWHERE $__timeFilter(c.datetimeorigination)\n  AND m.numberpacketssent >= 50\n  AND (\n    '__all__' = ANY(string_to_array('${label:csv}', ','))\n    OR EXISTS (\n      SELECT 1 FROM label_rules lr\n      WHERE lr.label = ANY(string_to_array('${label:csv}', ',')) AND lr.enabled\n        AND (\n          (lr.fields ? 'calling' AND c.callingpartynumber ~* lr.pattern)\n          OR (lr.fields ? 'called' AND c.finalcalledpartynumber ~* lr.pattern)\n          OR (lr.fields ? 'origDevice' AND c.origdevicename ~* lr.pattern)\n          OR (lr.fields ? 'destDevice' AND c.destdevicename ~* lr.pattern)\n        )\n    )\n  )\nGROUP BY 1 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "Jitter Trend",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_POSTGRESQL}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 60
+      },
+      "id": 13,
+      "pluginVersion": "",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_POSTGRESQL}"
+          },
+          "format": "time_series",
+          "rawSql": "SELECT $__timeGroup(c.datetimeorigination, '1h') AS time, avg(m.latency) AS \"Avg Latency (ms)\"\nFROM cdr c\nJOIN cmr m ON m.globalcallid_callmanagerid=c.globalcallid_callmanagerid AND m.globalcallid_callid=c.globalcallid_callid\nWHERE $__timeFilter(c.datetimeorigination)\n  AND m.numberpacketssent >= 50\n  AND (\n    '__all__' = ANY(string_to_array('${label:csv}', ','))\n    OR EXISTS (\n      SELECT 1 FROM label_rules lr\n      WHERE lr.label = ANY(string_to_array('${label:csv}', ',')) AND lr.enabled\n        AND (\n          (lr.fields ? 'calling' AND c.callingpartynumber ~* lr.pattern)\n          OR (lr.fields ? 'called' AND c.finalcalledpartynumber ~* lr.pattern)\n          OR (lr.fields ? 'origDevice' AND c.origdevicename ~* lr.pattern)\n          OR (lr.fields ? 'destDevice' AND c.destdevicename ~* lr.pattern)\n        )\n    )\n  )\nGROUP BY 1 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "Latency Trend",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_POSTGRESQL}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 60
+      },
+      "id": 14,
+      "pluginVersion": "",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_POSTGRESQL}"
+          },
+          "format": "time_series",
+          "rawSql": "SELECT $__timeGroup(c.datetimeorigination, '1h') AS time, avg(m.numberpacketslost) AS \"Avg Packets Lost\"\nFROM cdr c\nJOIN cmr m ON m.globalcallid_callmanagerid=c.globalcallid_callmanagerid AND m.globalcallid_callid=c.globalcallid_callid\nWHERE $__timeFilter(c.datetimeorigination)\n  AND m.numberpacketssent >= 50\n  AND (\n    '__all__' = ANY(string_to_array('${label:csv}', ','))\n    OR EXISTS (\n      SELECT 1 FROM label_rules lr\n      WHERE lr.label = ANY(string_to_array('${label:csv}', ',')) AND lr.enabled\n        AND (\n          (lr.fields ? 'calling' AND c.callingpartynumber ~* lr.pattern)\n          OR (lr.fields ? 'called' AND c.finalcalledpartynumber ~* lr.pattern)\n          OR (lr.fields ? 'origDevice' AND c.origdevicename ~* lr.pattern)\n          OR (lr.fields ? 'destDevice' AND c.destdevicename ~* lr.pattern)\n        )\n    )\n  )\nGROUP BY 1 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "Packet Loss Trend",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_POSTGRESQL}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 68
+      },
+      "id": 15,
+      "pluginVersion": "",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_POSTGRESQL}"
+          },
+          "format": "time_series",
+          "rawSql": "SELECT\n  $__timeGroup(c.datetimeorigination, '1h') AS time,\n  round(100.0 * sum(CASE WHEN (c.origcallterminationonbehalfof IN (5,6) OR c.destcallterminationonbehalfof IN (5,6)) THEN 1 ELSE 0 END) / NULLIF(count(*),0), 2) AS \"Transfer %\",\n  round(100.0 * sum(CASE WHEN COALESCE(c.joinonbehalfof,0) != 0 THEN 1 ELSE 0 END) / NULLIF(count(*),0), 2) AS \"Conference %\"\nFROM cdr c\nWHERE $__timeFilter(c.datetimeorigination)\n  AND (\n    '__all__' = ANY(string_to_array('${label:csv}', ','))\n    OR EXISTS (\n      SELECT 1 FROM label_rules lr\n      WHERE lr.label = ANY(string_to_array('${label:csv}', ',')) AND lr.enabled\n        AND (\n          (lr.fields ? 'calling' AND c.callingpartynumber ~* lr.pattern)\n          OR (lr.fields ? 'called' AND c.finalcalledpartynumber ~* lr.pattern)\n          OR (lr.fields ? 'origDevice' AND c.origdevicename ~* lr.pattern)\n          OR (lr.fields ? 'destDevice' AND c.destdevicename ~* lr.pattern)\n        )\n    )\n  )\nGROUP BY 1 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "Transfer/Conference Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "${DS_POSTGRESQL}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 52
+      },
+      "id": 16,
+      "pluginVersion": "",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "${DS_POSTGRESQL}"
+          },
+          "format": "table",
+          "rawSql": "SELECT c.globalcallid_clusterid AS \"Cluster\", count(*) AS \"Calls\"\nFROM cdr c\nWHERE $__timeFilter(c.datetimeorigination)\n  AND (\n    '__all__' = ANY(string_to_array('${label:csv}', ','))\n    OR EXISTS (\n      SELECT 1 FROM label_rules lr\n      WHERE lr.label = ANY(string_to_array('${label:csv}', ',')) AND lr.enabled\n        AND (\n          (lr.fields ? 'calling' AND c.callingpartynumber ~* lr.pattern)\n          OR (lr.fields ? 'called' AND c.finalcalledpartynumber ~* lr.pattern)\n          OR (lr.fields ? 'origDevice' AND c.origdevicename ~* lr.pattern)\n          OR (lr.fields ? 'destDevice' AND c.destdevicename ~* lr.pattern)\n        )\n    )\n  )\nGROUP BY 1\nORDER BY 2 DESC",
+          "refId": "A"
+        }
+      ],
+      "title": "Cluster/Node Breakdown",
+      "type": "table"
+    }
+  ],
+  "preload": false,
+  "refresh": "5m",
+  "schemaVersion": 42,
+  "tags": [
+    "cdr"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "cdr_ui_url",
+        "type": "textbox",
+        "label": "CDR UI base URL",
+        "query": "https://your-cdr-ui-host",
+        "current": {
+          "value": "https://your-cdr-ui-host",
+          "text": "https://your-cdr-ui-host"
+        },
+        "hide": 0
+      },
+      {
+        "allValue": "__all__",
+        "allowCustomValue": true,
+        "current": {
+          "text": "All",
+          "value": [
+            "__all__"
+          ]
+        },
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "${DS_POSTGRESQL}"
+        },
+        "hide": 0,
+        "includeAll": true,
+        "label": "Label",
+        "multi": true,
+        "name": "label",
+        "options": [],
+        "query": "SELECT DISTINCT label AS __text, label AS __value FROM label_rules WHERE enabled ORDER BY 1",
+        "refresh": 1,
+        "regex": "",
+        "regexApplyTo": "value",
+        "skipUrlSync": false,
+        "sort": 0,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m",
+      "15m",
+      "30m",
+      "1h",
+      "2h",
+      "1d"
+    ]
+  },
+  "timezone": "browser",
+  "title": "CDR Overview (sample)",
+  "uid": "cdr-overview-sample",
+  "weekStart": "",
+  "__inputs": [
+    {
+      "name": "DS_POSTGRESQL",
+      "label": "PostgreSQL",
+      "description": "Read-only Postgres datasource pointed at the cisco-cdr-processor database (see grafana-dashboard.md for the read-only role setup).",
+      "type": "datasource",
+      "pluginId": "grafana-postgresql-datasource",
+      "pluginName": "PostgreSQL"
+    }
+  ],
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "10.0.0"
+    },
+    {
+      "type": "datasource",
+      "id": "grafana-postgresql-datasource",
+      "name": "PostgreSQL",
+      "version": "1.0.0"
+    },
+    {
+      "type": "panel",
+      "id": "timeseries",
+      "name": "Time series",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "stat",
+      "name": "Stat",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "bargauge",
+      "name": "Bar gauge",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "piechart",
+      "name": "Pie chart",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "table",
+      "name": "Table",
+      "version": ""
+    }
+  ],
+  "id": null
+}

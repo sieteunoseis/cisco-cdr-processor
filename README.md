@@ -259,6 +259,71 @@ Three views are created automatically on startup for use in DBeaver, psql, or Gr
 | `cdr_augmented` | CDR with cause code descriptions, codec names, on-behalf-of text |
 | `cmr_augmented` | CMR records with local/remote device names joined from CDR       |
 
+## Grafana Dashboard
+
+A sample dashboard is included at [`docs/grafana-dashboard.json`](docs/grafana-dashboard.json) — 16 panels covering call volume, failure rate, top calling/called numbers, MOS/jitter/latency/packet-loss trends, codec distribution, device quality, and the configured alert rules. Every panel is scoped by a **Label** dropdown, so it works with whatever label rules you've defined (see [cisco-cdr-ui's README](https://github.com/sieteunoseis/cisco-cdr-ui#grafana-dashboard) for how labels are created — they're managed there, but every panel here reads them live).
+
+### 1. Create a read-only Postgres role
+
+Grafana only needs `SELECT`. Don't point it at this app's own read/write `DATABASE_URL` role.
+
+```sql
+CREATE ROLE grafana_reader LOGIN PASSWORD '<pick a strong password>';
+GRANT CONNECT ON DATABASE <your_db_name> TO grafana_reader;
+GRANT USAGE ON SCHEMA public TO grafana_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO grafana_reader;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO grafana_reader;
+```
+
+The `ALTER DEFAULT PRIVILEGES` line matters here specifically because this app's migrations (`sql/Migration*.sql`) re-run on every boot and can add new tables — without it, a future migration's table would silently be unreadable by Grafana until someone remembers to re-grant.
+
+If your Postgres server authenticates connections via `pg_hba.conf` rules keyed on username (for example, an LDAP catch-all for anything not explicitly listed), `grafana_reader`'s password does nothing unless it also has its own `scram-sha-256` (or equivalent) line **above** that catch-all:
+
+```
+host    all             grafana_reader  0.0.0.0/0               scram-sha-256
+```
+
+Then reload Postgres to pick it up — no restart needed:
+
+```sql
+SELECT pg_reload_conf();
+```
+
+### 2. Add the Postgres datasource in Grafana
+
+Connections → Add data source → PostgreSQL. Host/port/database from this app's own `DATABASE_URL`, user `grafana_reader`, the password you set above, and whatever TLS/SSL mode your Postgres server requires (`disable` if it's not configured for TLS). Save & test — it should come back green.
+
+### 3. Import the sample dashboard
+
+Dashboards → New → Import → Upload JSON file → `docs/grafana-dashboard.json`. Grafana will prompt for:
+
+- **PostgreSQL** — pick the datasource you just created
+- **CDR UI base URL** (`cdr_ui_url` variable) — the base URL of your `cisco-cdr-ui` deployment, used by the "Search this number in CDR" links on the Top Calling/Top Called panels. Leave the placeholder if you don't have the UI deployed and just want the raw data.
+
+### How the label-aware queries work
+
+Labels aren't stored on individual CDR rows — `label_rules` just holds a pattern per label, matched live. Every panel that's scoped by the **Label** variable uses the same shape:
+
+```sql
+AND (
+  '__all__' = ANY(string_to_array('${label:csv}', ','))
+  OR EXISTS (
+    SELECT 1 FROM label_rules lr
+    WHERE lr.label = ANY(string_to_array('${label:csv}', ',')) AND lr.enabled
+      AND (
+        (lr.fields ? 'calling' AND c.callingpartynumber ~* lr.pattern)
+        OR (lr.fields ? 'called' AND c.finalcalledpartynumber ~* lr.pattern)
+        OR (lr.fields ? 'origDevice' AND c.origdevicename ~* lr.pattern)
+        OR (lr.fields ? 'destDevice' AND c.destdevicename ~* lr.pattern)
+      )
+  )
+)
+```
+
+`${label:csv}` is Grafana's multi-value variable formatted as a plain comma-separated list — the `'__all__'` sentinel (the variable's "Custom all value") means "no filter" when the dropdown is set to All, and otherwise the query matches any call against any of the selected labels' patterns. This mirrors the same label-to-SQL logic `src/api/routes/alerts.js`'s `loadLabelMatchClause` already uses for `label_volume` alert rules, just inlined for a raw SQL panel. Because it's time-bounded via `$__timeFilter` on every panel and `label_rules` is a small table, the `EXISTS` join stays cheap regardless of how large `cdr` grows.
+
+Any label you create — via the frontend's Settings page, `POST /api/v1/labels`, or a direct `INSERT INTO label_rules` — becomes selectable in the dashboard's Label dropdown immediately, no dashboard changes required.
+
 ## Migration from the C# App
 
 The database schema is fully compatible with the existing C# callmanagercdrcollector application. On first startup against an existing database:
