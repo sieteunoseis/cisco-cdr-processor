@@ -13,7 +13,20 @@ function createCdrRouter(pool) {
   router.get("/search", async (req, res) => {
     try {
       const rows = await searchCdr(pool, req.query);
-      res.json({ count: rows.length, results: rows });
+      // A full page means there may be more — hand back a cursor (last
+      // row's ordering key) the client can pass as beforeTime/beforePkid
+      // to fetch the next page without re-running this query with a
+      // bigger LIMIT (see searchCdr's keyset-pagination comment).
+      const effectiveLimit = Math.min(
+        parseInt(req.query.limit, 10) || 100,
+        1000,
+      );
+      const last = rows[rows.length - 1];
+      const nextCursor =
+        rows.length === effectiveLimit && last
+          ? { beforeTime: last.datetimeorigination, beforePkid: last.pkid }
+          : null;
+      res.json({ count: rows.length, results: rows, nextCursor });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

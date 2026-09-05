@@ -50,6 +50,8 @@ async function searchCdr(pool, params) {
     end,
     labelIds,
     limit = 100,
+    beforeTime,
+    beforePkid,
   } = params;
 
   const conditions = [];
@@ -129,6 +131,17 @@ async function searchCdr(pool, params) {
       `c.datetimeorigination >= now() - interval '${parseTimeRange(last)}'`,
     );
   }
+  // Keyset pagination cursor — "give me rows strictly after this point in
+  // the (datetimeorigination DESC, pkid DESC) ordering". pkid is a
+  // deterministic tiebreaker: without it, ORDER BY datetimeorigination
+  // DESC LIMIT N is ambiguous whenever rows share a timestamp (routine on
+  // a busy cluster), so paging by re-running with a bigger LIMIT could
+  // silently swap which tied rows land in the page between requests.
+  if (beforeTime && beforePkid) {
+    conditions.push(`(c.datetimeorigination, c.pkid) < ($${idx}, $${idx + 1})`);
+    values.push(beforeTime, beforePkid);
+    idx += 2;
+  }
 
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const limitVal = Math.min(parseInt(limit, 10) || 100, 1000);
@@ -167,7 +180,7 @@ async function searchCdr(pool, params) {
     LEFT JOIN cdr_cause dc ON c.destcause_value = dc.id
     LEFT JOIN cdr_codec codec ON c.origmediacap_payloadcapability = codec.id
     ${where}
-    ORDER BY c.datetimeorigination DESC
+    ORDER BY c.datetimeorigination DESC, c.pkid DESC
     LIMIT ${limitVal}
   `;
 
