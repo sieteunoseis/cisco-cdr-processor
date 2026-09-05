@@ -104,6 +104,12 @@ async function initSchema(pool) {
     "utf8",
   );
   await pool.query(savedQueriesSql);
+
+  const npanxxCarrierSql = fs.readFileSync(
+    path.join(SQL_DIR, "Migration013_npanxx_carrier.sql"),
+    "utf8",
+  );
+  await pool.query(npanxxCarrierSql);
   console.log("Migrations applied.");
 }
 

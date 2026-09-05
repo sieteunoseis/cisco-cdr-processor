@@ -529,6 +529,13 @@ async function healthCheck(pool, incomingDir) {
   `);
   health.enrichment_cache = cacheStats.rows[0];
 
+  // NPA-NXX carrier lookup table stats
+  const npanxxStats = await pool.query(`
+    SELECT count(*) AS total_prefixes, max(updated_at) AS last_updated
+    FROM npanxx
+  `);
+  health.npanxx = npanxxStats.rows[0];
+
   // Files in incoming directory
   try {
     const files = fs.readdirSync(incomingDir);

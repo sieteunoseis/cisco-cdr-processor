@@ -151,6 +151,11 @@ const CDR_COLUMNS = [
   "called_party_user",
   "route_pattern_matched",
   "enriched_at",
+  // Enrichment columns (populated by NPA-NXX carrier lookups)
+  "callingpartynumber_carrier",
+  "originalcalledpartynumber_carrier",
+  "finalcalledpartynumber_carrier",
+  "lastredirectdn_carrier",
 ];
 
 async function insertCdrRecords(pool, records) {

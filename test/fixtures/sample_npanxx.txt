@@ -1,0 +1,5 @@
+State	NPA-NXX	OCN 	Company                                                                                             	RateCenter	EffectiveDate	Use	AssignDate   	Initial/Growth	Pooled Code 	In Service  	File Updated 09/04/2026
+AK   	907-200	6872	"GCI COMMUNICATION CORP. DBA GENERAL COMMUNICATION"                                                 	VALDEZ    	             	AS 	02/21/2006   	I             	N           	Yes
+AK   	907-201	6563	"CELLCO PARTNERSHIP DBA VERIZON WIRELESS"                                                           	ELMEDRFAFB	             	AS 	09/18/2014   	I             	Y           	Yes
+AK   	907-211	MULT	"MULTIPLE OCN LISTING"                                                                              	XXXXXXXXXX	             	UA 	             	              	            	No
+AK   	907-221	3023	"UNITED UTILITIES, INC."                                                                            	BIRCHCREEK	             	AS 	             	              	N           	Yes

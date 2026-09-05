@@ -21,6 +21,11 @@ const { createRestServer } = require("./api/rest-server");
 const { createMcpServer } = require("./mcp/mcp-server");
 const { startRetentionJob } = require("./retention");
 const { enrichCdrRecords } = require("./enrichment/enricher");
+const { enrichCarrier } = require("./enrichment/carrier");
+const {
+  ensureNpanxxData,
+  startNpanxxImportJob,
+} = require("./enrichment/npanxx-importer");
 
 async function waitForDatabase(maxRetries = 10, delayMs = 3000) {
   for (let i = 0; i < maxRetries; i++) {
@@ -51,12 +56,16 @@ async function main() {
   startWatcher(pool, {
     cdrWriter: async (p, records) => {
       const enriched = await enrichCdrRecords(p, records, config.axl);
-      return insertCdrRecords(p, enriched);
+      const withCarrier = await enrichCarrier(p, enriched);
+      return insertCdrRecords(p, withCarrier);
     },
     cmrWriter: insertCmrRecords,
   });
 
   startRetentionJob(pool, config.cdr.retentionDays);
+
+  await ensureNpanxxData(pool);
+  startNpanxxImportJob(pool);
 
   console.log("cisco-cucm-cdr ready.");
 }
