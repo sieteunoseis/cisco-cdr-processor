@@ -2,5 +2,6 @@ node_modules/
 .env
 data/
 *.log
+scripts/.backfill-carrier-progress
 docs/superpowers/
 .DS_Store

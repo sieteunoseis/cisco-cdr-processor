@@ -493,21 +493,25 @@ async function statsCdr(pool, params) {
 async function healthCheck(pool, incomingDir) {
   const health = {};
 
-  // CDR count + date range
-  const cdrStats = await pool.query(`
-    SELECT
-      count(*) AS total,
-      min(datetimeorigination) AS oldest,
-      max(datetimeorigination) AS newest
+  // CDR count (fast planner estimate, not an exact count(*)) + date range
+  // (index-only scan on datetimeorigination, cheap even exact). This
+  // endpoint gets polled on an interval by external monitoring; an exact
+  // count(*) is a full heap scan that takes minutes on a 30M+ row table,
+  // and repeated polls pile up stuck connections faster than they finish.
+  const cdrEstimate = await pool.query(`
+    SELECT reltuples::bigint AS total FROM pg_class WHERE oid = 'cdr'::regclass
+  `);
+  const cdrRange = await pool.query(`
+    SELECT min(datetimeorigination) AS oldest, max(datetimeorigination) AS newest
     FROM cdr
   `);
-  health.cdr = cdrStats.rows[0];
+  health.cdr = { total: cdrEstimate.rows[0].total, ...cdrRange.rows[0] };
 
-  // CMR count
-  const cmrStats = await pool.query(`
-    SELECT count(*) AS total FROM cmr
+  // CMR count (same fast-estimate reasoning as cdr above)
+  const cmrEstimate = await pool.query(`
+    SELECT reltuples::bigint AS total FROM pg_class WHERE oid = 'cmr'::regclass
   `);
-  health.cmr = { total: cmrStats.rows[0].total };
+  health.cmr = { total: cmrEstimate.rows[0].total };
 
   // File processing log — last hour
   const recentFiles = await pool.query(`
