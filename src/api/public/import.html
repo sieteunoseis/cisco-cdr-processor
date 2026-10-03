@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CDR Manual Import</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --text: #1d2330; --muted: #667085;
+    --border: #d8dce3; --accent: #1f6feb; --accent-soft: #e8f0fe;
+    --ok: #1a7f37; --warn: #9a6700; --err: #cf222e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1218; --panel: #171b22; --text: #e6e9ef; --muted: #8b93a3;
+      --border: #2b313c; --accent: #4c8dff; --accent-soft: #1a2638;
+      --ok: #3fb950; --warn: #d29922; --err: #f85149;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 32px 0 8px; }
+  p.lead { color: var(--muted); margin: 0 0 24px; }
+  code { font-size: 12.5px; background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; }
+  .drop { border: 2px dashed var(--border); border-radius: 10px; background: var(--panel);
+    padding: 40px 16px; text-align: center; cursor: pointer; transition: border-color .15s, background .15s; }
+  .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  .drop strong { display: block; font-size: 16px; margin-bottom: 4px; }
+  .drop span { color: var(--muted); }
+  .opts { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin: 16px 0; }
+  .opts label { display: flex; gap: 6px; align-items: center; }
+  select, button { font: inherit; color: inherit; }
+  select { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+  button { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 7px 16px; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.ghost { background: transparent; color: var(--accent); padding: 4px 8px; }
+  .summary { color: var(--muted); margin: 8px 0; min-height: 21px; }
+  .table-wrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { font-weight: 600; color: var(--muted); font-size: 12.5px; }
+  tr:last-child td { border-bottom: 0; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.msg { white-space: normal; color: var(--muted); }
+  .st-imported { color: var(--ok); } .st-skipped { color: var(--warn); } .st-error { color: var(--err); }
+  .st-pending { color: var(--muted); }
+  .empty { padding: 16px; color: var(--muted); text-align: center; }
+  .row-head { display: flex; justify-content: space-between; align-items: baseline; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Manual CDR / CMR import</h1>
+  <p class="lead">Upload CUCM flat files (<code>cdr_*</code>, <code>cmr_*</code>) or a ZIP of them. Records go
+    through the same AXL / carrier enrichment as the SFTP watcher and are de-duplicated by <code>pkid</code>.</p>
+
+  <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose files to import">
+    <strong>Drop files here or click to browse</strong>
+    <span>CDR/CMR flat files or .zip archives</span>
+    <input type="file" id="file" multiple hidden>
+  </div>
+
+  <div class="opts">
+    <label>Type
+      <select id="type">
+        <option value="">Auto-detect</option>
+        <option value="cdr">CDR</option>
+        <option value="cmr">CMR</option>
+      </select>
+    </label>
+    <label><input type="checkbox" id="force"> Re-import files already processed</label>
+    <button id="start" disabled>Import</button>
+  </div>
+
+  <div class="summary" id="summary"></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>File</th><th>Type</th><th>Status</th><th class="num">Parsed</th><th class="num">Inserted</th><th>Details</th></tr></thead>
+      <tbody id="results"><tr><td colspan="6" class="empty">No files selected.</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="row-head">
+    <h2>Recent processing history</h2>
+    <button class="ghost" id="refresh">Refresh</button>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Processed</th><th>File</th><th>Type</th><th class="num">Inserted</th><th>Error</th></tr></thead>
+      <tbody id="history"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+    </table>
+  </div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const API = "api/v1/cdr/import";
+let queue = [];
+
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmtSize = (n) => n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
+
+function renderQueue() {
+  $("start").disabled = queue.length === 0 || queue.some((q) => q.state === "uploading");
+  if (!queue.length) { $("results").innerHTML = '<tr><td colspan="6" class="empty">No files selected.</td></tr>'; return; }
+  $("results").innerHTML = queue.flatMap((q) => {
+    if (!q.results) {
+      const label = q.state === "uploading" ? "uploading…" : "pending";
+      return [`<tr><td>${esc(q.file.name)}</td><td>—</td><td class="st-pending">${label}</td><td class="num"></td><td class="num"></td><td class="msg">${fmtSize(q.file.size)}</td></tr>`];
+    }
+    return q.results.map((r) => `<tr><td>${esc(r.filename)}</td><td>${esc(r.type || "—")}</td>
+      <td class="st-${esc(r.status)}">${esc(r.status)}</td>
+      <td class="num">${r.records_parsed ?? ""}</td><td class="num">${r.records_inserted ?? ""}</td>
+      <td class="msg">${esc(r.error || r.reason || (r.duplicates ? r.duplicates + " duplicate(s) ignored" : ""))}</td></tr>`);
+  }).join("");
+}
+
+function addFiles(files) {
+  if (queue.length && queue.every((q) => q.results)) queue = [];
+  for (const file of files) queue.push({ file, state: "pending" });
+  $("summary").textContent = "";
+  renderQueue();
+}
+
+async function runImport() {
+  const params = new URLSearchParams();
+  if ($("type").value) params.set("type", $("type").value);
+  if ($("force").checked) params.set("force", "true");
+  const totals = { files: 0, imported: 0, skipped: 0, errors: 0, inserted: 0 };
+  for (const q of queue) {
+    if (q.results) continue;
+    q.state = "uploading"; renderQueue();
+    params.set("filename", q.file.name);
+    try {
+      const res = await fetch(`${API}?${params}`, {
+        method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: q.file,
+      });
+      const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      q.results = data.results || [{ filename: q.file.name, status: "error", error: data.error || `HTTP ${res.status}` }];
+    } catch (err) {
+      q.results = [{ filename: q.file.name, status: "error", error: err.message }];
+    }
+    q.state = "done";
+    for (const r of q.results) {
+      totals.files++; totals.inserted += r.records_inserted || 0;
+      if (r.status === "imported") totals.imported++; else if (r.status === "skipped") totals.skipped++; else totals.errors++;
+    }
+    renderQueue();
+  }
+  $("summary").textContent = `${totals.files} file(s): ${totals.imported} imported, ${totals.skipped} skipped, ${totals.errors} error(s) — ${totals.inserted.toLocaleString()} record(s) inserted.`;
+  loadHistory();
+}
+
+async function loadHistory() {
+  try {
+    const res = await fetch(`${API}/history?limit=25`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    $("history").innerHTML = data.results.length ? data.results.map((r) => `<tr>
+      <td>${esc(new Date(r.processed_at).toLocaleString())}</td><td>${esc(r.filename)}</td><td>${esc(r.file_type)}</td>
+      <td class="num">${r.records_inserted ?? ""}</td><td class="msg st-error">${esc(r.error || "")}</td></tr>`).join("")
+      : '<tr><td colspan="5" class="empty">No files processed yet.</td></tr>';
+  } catch (err) {
+    $("history").innerHTML = `<tr><td colspan="5" class="empty st-error">${esc(err.message)}</td></tr>`;
+  }
+}
+
+const drop = $("drop");
+drop.addEventListener("click", () => $("file").click());
+drop.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("file").click(); } });
+$("file").addEventListener("change", (e) => { addFiles(e.target.files); e.target.value = ""; });
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); addFiles(e.dataTransfer.files); });
+$("start").addEventListener("click", runImport);
+$("refresh").addEventListener("click", loadHistory);
+loadHistory();
+</script>
+</body>
+</html>
