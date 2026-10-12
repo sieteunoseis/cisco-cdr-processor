@@ -5,6 +5,7 @@ const { parse } = require("csv-parse");
 const {
   epochToDate,
   emptyToNull,
+  parseInt32,
   parseVarVQMetrics,
 } = require("./type-converters");
 
@@ -100,8 +101,7 @@ function mapRow(row) {
     } else if (STRING_COLS.has(i)) {
       obj[name] = emptyToNull(raw);
     } else {
-      const n = parseInt(raw, 10);
-      obj[name] = isNaN(n) ? null : n;
+      obj[name] = parseInt32(raw);
     }
   }
   return obj;

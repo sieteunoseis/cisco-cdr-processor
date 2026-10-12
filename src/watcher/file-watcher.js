@@ -6,6 +6,30 @@ const { parseFilename } = require("./file-parser");
 const { parseCdrFile } = require("../parser/cdr-parser");
 const { parseCmrFile } = require("../parser/cmr-parser");
 
+// Network/database errors that are worth retrying (DNS blips, DB restarts).
+// Files failing with these are left in place and retried instead of being
+// logged as processed-with-error, which would make the watcher skip them.
+const TRANSIENT_CODES = new Set([
+  "EAI_AGAIN",
+  "ENOTFOUND",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "EPIPE",
+  "57P01", // admin_shutdown
+  "57P03", // cannot_connect_now
+]);
+const MAX_RETRIES = 5;
+
+function isTransientError(err) {
+  return (
+    TRANSIENT_CODES.has(err.code) ||
+    /Connection terminated|timeout exceeded when trying to connect/i.test(
+      err.message,
+    )
+  );
+}
+
 function startWatcher(pool, opts = {}) {
   const dir = opts.incomingDir || config.cdr.incomingDir;
   console.log(`File watcher: watching ${dir}`);
@@ -30,7 +54,7 @@ function startWatcher(pool, opts = {}) {
   return watcher;
 }
 
-async function processFile(pool, filePath, opts = {}) {
+async function processFile(pool, filePath, opts = {}, attempt = 0) {
   const fileInfo = parseFilename(filePath);
   if (!fileInfo) return; // Not a CDR/CMR file, skip silently
 
@@ -95,6 +119,24 @@ async function processFile(pool, filePath, opts = {}) {
     );
   } catch (err) {
     const processingTime = Date.now() - startTime;
+
+    if (isTransientError(err)) {
+      if (attempt < MAX_RETRIES) {
+        const delay = (opts.retryDelayMs ?? 30000) * 2 ** attempt;
+        console.warn(
+          `Transient error processing ${filename} (${err.message}), retry ${attempt + 1}/${MAX_RETRIES} in ${delay / 1000}s`,
+        );
+        setTimeout(() => {
+          processFile(pool, filePath, opts, attempt + 1);
+        }, delay);
+      } else {
+        console.error(
+          `Giving up on ${filename} after ${MAX_RETRIES} retries (${err.message}); left in place for next restart`,
+        );
+      }
+      return;
+    }
+
     console.error(`Error processing ${filename}:`, err.message);
 
     // Log error
@@ -120,4 +162,4 @@ async function processFile(pool, filePath, opts = {}) {
   }
 }
 
-module.exports = { startWatcher, processFile };
+module.exports = { startWatcher, processFile, isTransientError };

@@ -7,6 +7,7 @@ const {
   stringToIp,
   secondsToInterval,
   emptyToNull,
+  parseInt32,
   parseVarVQMetrics,
 } = require("../../src/parser/type-converters");
 
@@ -77,5 +78,24 @@ describe("parseVarVQMetrics", () => {
   });
   it("returns empty object for null", () => {
     assert.deepStrictEqual(parseVarVQMetrics(null), {});
+  });
+});
+
+describe("parseInt32", () => {
+  it("parses normal integers", () => {
+    assert.strictEqual(parseInt32("42"), 42);
+    assert.strictEqual(parseInt32("-5"), -5);
+    assert.strictEqual(parseInt32("2147483647"), 2147483647);
+  });
+
+  it("reinterprets unsigned 32-bit values as signed", () => {
+    assert.strictEqual(parseInt32("4294967295"), -1);
+    assert.strictEqual(parseInt32("4294967291"), -5);
+    assert.strictEqual(parseInt32("2147483648"), -2147483648);
+  });
+
+  it("returns null for empty or non-numeric input", () => {
+    assert.strictEqual(parseInt32(""), null);
+    assert.strictEqual(parseInt32("abc"), null);
   });
 });

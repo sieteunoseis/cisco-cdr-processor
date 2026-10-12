@@ -35,6 +35,17 @@ function emptyToNull(str) {
   return str;
 }
 
+// CUCM writes some integer fields as unsigned 32-bit (e.g. numberPacketsLost
+// = 4294967295 for -1), but the cdr/cmr columns are signed int4. Reinterpret
+// out-of-range values as two's-complement so they fit instead of failing
+// the whole file's insert.
+function parseInt32(str) {
+  const n = parseInt(str, 10);
+  if (isNaN(n)) return null;
+  if (n > 0x7fffffff && n <= 0xffffffff) return n - 0x100000000;
+  return n;
+}
+
 function parseVarVQMetrics(str) {
   if (!str || str.trim() === "") return {};
   const result = {};
@@ -54,5 +65,6 @@ module.exports = {
   stringToIp,
   secondsToInterval,
   emptyToNull,
+  parseInt32,
   parseVarVQMetrics,
 };

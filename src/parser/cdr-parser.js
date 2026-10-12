@@ -9,6 +9,7 @@ const {
   stringToIp,
   secondsToInterval,
   emptyToNull,
+  parseInt32,
 } = require("./type-converters");
 
 // Columns that are int-to-IP (positional)
@@ -189,8 +190,7 @@ function mapRow(row) {
       obj[name] = emptyToNull(raw);
     } else {
       // integer column
-      const n = parseInt(raw, 10);
-      obj[name] = isNaN(n) ? null : n;
+      obj[name] = parseInt32(raw);
     }
   }
   return obj;
