@@ -9,12 +9,13 @@ services:
       - "3000:3000"
     volumes:
       - ${CDR_INCOMING_DIR:-./data/incoming}:/data/incoming
+    # Pass the whole .env through so the numbered AXL_*_1..5 cluster vars
+    # (and any other optional settings) reach the app.
+    env_file:
+      - path: .env
+        required: false
     environment:
       - DATABASE_URL=postgresql://cdr:${POSTGRES_PASSWORD:-cdr_password}@postgres:5432/callmanager
-      - AXL_HOST=${AXL_HOST:-}
-      - AXL_USERNAME=${AXL_USERNAME:-}
-      - AXL_PASSWORD=${AXL_PASSWORD:-}
-      - AXL_VERSION=${AXL_VERSION:-15.0}
       - CDR_RETENTION_DAYS=${CDR_RETENTION_DAYS:-90}
       - MCP_PORT=3000
       - LOG_LEVEL=${LOG_LEVEL:-info}
