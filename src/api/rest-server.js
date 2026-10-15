@@ -11,8 +11,10 @@ const { createNumplanRouter } = require("./routes/numplan");
 const { createSpamRouter } = require("./routes/spam");
 const { createAlertsRouter } = require("./routes/alerts");
 const { createSavedQueriesRouter } = require("./routes/saved-queries");
+const { createImportRouter } = require("./routes/import");
+const path = require("path");
 
-function createRestServer(pool) {
+function createRestServer(pool, opts = {}) {
   const app = express();
 
   app.use(express.json());
@@ -21,7 +23,7 @@ function createRestServer(pool) {
   const corsOrigin = process.env.CORS_ORIGIN || "*";
   app.use((req, res, next) => {
     res.header("Access-Control-Allow-Origin", corsOrigin);
-    res.header("Access-Control-Allow-Headers", "Content-Type");
+    res.header("Access-Control-Allow-Headers", "Content-Type, X-Filename");
     res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     if (req.method === "OPTIONS") return res.sendStatus(204);
     next();
@@ -40,6 +42,12 @@ function createRestServer(pool) {
   app.use("/api/v1/spam", createSpamRouter(pool));
   app.use("/api/v1/alerts", createAlertsRouter(pool));
   app.use("/api/v1/saved-queries", createSavedQueriesRouter(pool));
+  app.use("/api/v1/cdr/import", createImportRouter(pool, opts.writers));
+
+  // Manual CDR/CMR upload page
+  app.get("/import", (req, res) => {
+    res.sendFile(path.join(__dirname, "public", "import.html"));
+  });
 
   // 404 fallback for unknown API routes
   app.use("/api", (req, res) => {

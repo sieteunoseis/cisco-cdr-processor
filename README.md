@@ -97,6 +97,7 @@ curl http://localhost:3000/health
 | `MCP_PORT`           | `3000`                                                    | Port for MCP + REST API server         |
 | `LOG_LEVEL`          | `info`                                                    | Log level (`info`, `debug`)            |
 | `CORS_ORIGIN`        | `*`                                                       | Allowed origin for the REST API (set to your dashboard's URL) |
+| `IMPORT_MAX_SIZE`    | `100mb`                                                   | Max upload size for manual CDR/CMR import |
 | `POSTGRES_PASSWORD`  | `cdr_password`                                            | Postgres password (compose only)       |
 | `POSTGRES_PORT`      | `5432`                                                    | Postgres exposed port (compose only)   |
 | `TWILIO_ACCOUNT_SID` | (none)                                                    | Twilio Account SID — enables spam/carrier check |
@@ -164,6 +165,26 @@ Base URL: `http://localhost:3000`
 | `POST /api/v1/cdr/logs/collect`                       | Collect SDL/SDI traces via DIME for a call                    |
 | `POST /api/v1/cdr/logs/sip-ladder`                    | Kick off SIP ladder trace collection (async job)                |
 | `GET /api/v1/cdr/logs/sip-ladder/status/:jobId`       | Poll a SIP ladder collection job                                  |
+
+### Manual Import
+
+CDR/CMR files that didn't arrive over SFTP (backfills, files pulled from another server, test data) can be imported by hand. They go through the same parser, AXL/carrier enrichment and `pkid` de-duplication as the watcher, and are recorded in `file_processing_log`.
+
+| Endpoint                                                  | Description                                              |
+| --------------------------------------------------------- | -------------------------------------------------------- |
+| `GET /import`                                             | Drag-and-drop upload page                                 |
+| `POST /api/v1/cdr/import?filename=...&type=&force=`       | Raw file body — a CDR/CMR flat file or a ZIP of them. `type` (`cdr`/`cmr`) is detected from the filename or column count when omitted; `force=true` re-imports a file already in the processing log |
+| `GET /api/v1/cdr/import/history?limit=50`                 | Most recent entries from the file processing log          |
+
+```bash
+# Upload one file (or a .zip)
+curl --data-binary @cdr_StandAloneCluster_01_202603251541_1234 \
+  -H "Content-Type: application/octet-stream" \
+  "http://localhost:3000/api/v1/cdr/import?filename=cdr_StandAloneCluster_01_202603251541_1234"
+
+# Import files or a directory from inside the container
+docker exec cisco-cucm-cdr node scripts/import-cdr.js [--force] [--type cdr|cmr] /path/to/files
+```
 
 ### Labels
 

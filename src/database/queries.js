@@ -118,12 +118,17 @@ async function searchCdr(pool, params) {
       conditions.push(orClauses.length > 0 ? `(${orClauses.join(" OR ")})` : "false");
     }
   }
+  // datetimeorigination is `timestamp without time zone` holding the
+  // server's local wall-clock time, while start/end/beforeTime arrive as
+  // ISO-8601 UTC strings. Casting the parameter to timestamptz makes
+  // Postgres convert it to local time; a bare compare would drop the "Z"
+  // and shift the window by the UTC offset.
   if (start) {
-    conditions.push(`c.datetimeorigination >= $${idx++}`);
+    conditions.push(`c.datetimeorigination >= $${idx++}::timestamptz`);
     values.push(start);
   }
   if (end) {
-    conditions.push(`c.datetimeorigination <= $${idx++}`);
+    conditions.push(`c.datetimeorigination <= $${idx++}::timestamptz`);
     values.push(end);
   }
   if (!start && !end && last) {
@@ -138,7 +143,7 @@ async function searchCdr(pool, params) {
   // a busy cluster), so paging by re-running with a bigger LIMIT could
   // silently swap which tied rows land in the page between requests.
   if (beforeTime && beforePkid) {
-    conditions.push(`(c.datetimeorigination, c.pkid) < ($${idx}, $${idx + 1})`);
+    conditions.push(`(c.datetimeorigination, c.pkid) < ($${idx}::timestamptz, $${idx + 1})`);
     values.push(beforeTime, beforePkid);
     idx += 2;
   }
@@ -287,11 +292,11 @@ async function qualityCdr(pool, params) {
     values.push(parseInt(loss_above, 10));
   }
   if (start) {
-    conditions.push(`c.datetimeorigination >= $${idx++}`);
+    conditions.push(`c.datetimeorigination >= $${idx++}::timestamptz`);
     values.push(start);
   }
   if (end) {
-    conditions.push(`c.datetimeorigination <= $${idx++}`);
+    conditions.push(`c.datetimeorigination <= $${idx++}::timestamptz`);
     values.push(end);
   }
   if (!start && !end) {
@@ -363,11 +368,11 @@ async function statsCdr(pool, params) {
   let idx = 1;
 
   if (start) {
-    timeConditions.push(`datetimeorigination >= $${idx++}`);
+    timeConditions.push(`datetimeorigination >= $${idx++}::timestamptz`);
     timeValues.push(start);
   }
   if (end) {
-    timeConditions.push(`datetimeorigination <= $${idx++}`);
+    timeConditions.push(`datetimeorigination <= $${idx++}::timestamptz`);
     timeValues.push(end);
   }
   if (!start && !end) {
