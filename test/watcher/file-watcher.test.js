@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const {
+  sweepDir,
   processFile,
   isTransientError,
 } = require("../../src/watcher/file-watcher");
@@ -25,7 +26,12 @@ const dnsError = () =>
 describe("isTransientError", () => {
   it("flags network and connection errors", () => {
     assert.ok(isTransientError(dnsError()));
-    assert.ok(isTransientError(new Error("Connection terminated unexpectedly")));
+    assert.ok(
+      isTransientError(new Error("Connection terminated unexpectedly")),
+    );
+    assert.ok(
+      isTransientError(Object.assign(new Error("x"), { code: "ENETUNREACH" })),
+    );
   });
 
   it("does not flag data errors", () => {
@@ -57,7 +63,10 @@ describe("processFile", () => {
     assert.ok(fs.existsSync(file), "file left in place for retry");
     await new Promise((r) => setTimeout(r, 100));
     assert.ok(!fs.existsSync(file), "file processed on retry");
-    assert.ok(!queries.some((q) => q.includes("error)")), "no error row logged");
+    assert.ok(
+      !queries.some((q) => q.includes("error)")),
+      "no error row logged",
+    );
   });
 
   it("logs permanent errors", async () => {
@@ -74,6 +83,31 @@ describe("processFile", () => {
         throw new Error("bad data");
       },
     });
-    assert.ok(queries.some((q) => q.includes("error)")), "error row logged");
+    assert.ok(
+      queries.some((q) => q.includes("error)")),
+      "error row logged",
+    );
+  });
+});
+
+describe("sweepDir", () => {
+  const okPool = () => ({ query: async () => ({ rows: [] }) });
+
+  it("processes files left behind in the incoming dir", async () => {
+    const file = stageFile("cdr_A_01_202603251541_3");
+    const old = new Date(Date.now() - 120000);
+    fs.utimesSync(file, old, old);
+    await sweepDir(okPool(), path.dirname(file), {
+      cdrWriter: async (p, records) => records.length,
+    });
+    assert.ok(!fs.existsSync(file), "leftover file processed");
+  });
+
+  it("leaves recently written files to the watcher", async () => {
+    const file = stageFile("cdr_A_01_202603251541_4");
+    await sweepDir(okPool(), path.dirname(file), {
+      cdrWriter: async (p, records) => records.length,
+    });
+    assert.ok(fs.existsSync(file), "fresh file untouched");
   });
 });

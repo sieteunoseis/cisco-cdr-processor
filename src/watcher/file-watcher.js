@@ -15,11 +15,21 @@ const TRANSIENT_CODES = new Set([
   "ECONNREFUSED",
   "ECONNRESET",
   "ETIMEDOUT",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "EHOSTDOWN",
   "EPIPE",
   "57P01", // admin_shutdown
+  "57P02", // crash_shutdown
   "57P03", // cannot_connect_now
 ]);
 const MAX_RETRIES = 5;
+
+// Files currently being processed or waiting on a retry timer, so the
+// periodic sweep doesn't pick them up a second time.
+const inFlight = new Set();
+// Files skipped as already processed; only log the skip once per file.
+const skipped = new Set();
 
 function isTransientError(err) {
   return (
@@ -51,7 +61,35 @@ function startWatcher(pool, opts = {}) {
     console.error("File watcher error:", err.message);
   });
 
+  // Files left behind after retries were exhausted (e.g. a long DB outage)
+  // only get a new "add" event on restart, so rescan the directory.
+  const sweepMs = opts.sweepIntervalMs ?? 5 * 60 * 1000;
+  const sweep = setInterval(() => sweepDir(pool, dir, opts), sweepMs);
+  sweep.unref();
+  watcher.on("close", () => clearInterval(sweep));
+
   return watcher;
+}
+
+async function sweepDir(pool, dir, opts = {}) {
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch (err) {
+    console.error("Sweep failed to read incoming dir:", err.message);
+    return;
+  }
+  for (const name of names) {
+    const filePath = path.join(dir, name);
+    if (inFlight.has(filePath) || skipped.has(filePath)) continue;
+    // Leave files still being written over SFTP to the watcher.
+    try {
+      if (Date.now() - fs.statSync(filePath).mtimeMs < 60000) continue;
+    } catch {
+      continue; // removed since readdir
+    }
+    await processFile(pool, filePath, opts);
+  }
 }
 
 async function processFile(pool, filePath, opts = {}, attempt = 0) {
@@ -61,6 +99,12 @@ async function processFile(pool, filePath, opts = {}, attempt = 0) {
   const filename = path.basename(filePath);
   const startTime = Date.now();
 
+  if (attempt === 0) {
+    if (inFlight.has(filePath)) return;
+    inFlight.add(filePath);
+  }
+  let retrying = false;
+
   try {
     // Check dedup — skip if already processed
     const existing = await pool.query(
@@ -68,7 +112,10 @@ async function processFile(pool, filePath, opts = {}, attempt = 0) {
       [filename],
     );
     if (existing.rows.length > 0) {
-      console.log(`Skipping already processed: ${filename}`);
+      if (!skipped.has(filePath)) {
+        console.log(`Skipping already processed: ${filename}`);
+        skipped.add(filePath);
+      }
       return;
     }
 
@@ -126,12 +173,13 @@ async function processFile(pool, filePath, opts = {}, attempt = 0) {
         console.warn(
           `Transient error processing ${filename} (${err.message}), retry ${attempt + 1}/${MAX_RETRIES} in ${delay / 1000}s`,
         );
+        retrying = true;
         setTimeout(() => {
           processFile(pool, filePath, opts, attempt + 1);
         }, delay);
       } else {
         console.error(
-          `Giving up on ${filename} after ${MAX_RETRIES} retries (${err.message}); left in place for next restart`,
+          `Giving up on ${filename} after ${MAX_RETRIES} retries (${err.message}); left in place for next sweep`,
         );
       }
       return;
@@ -159,7 +207,9 @@ async function processFile(pool, filePath, opts = {}, attempt = 0) {
     } catch (logErr) {
       console.error("Failed to log error:", logErr.message);
     }
+  } finally {
+    if (!retrying) inFlight.delete(filePath);
   }
 }
 
-module.exports = { startWatcher, processFile, isTransientError };
+module.exports = { startWatcher, sweepDir, processFile, isTransientError };
