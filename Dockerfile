@@ -7,6 +7,7 @@ RUN npm ci --production
 
 COPY sql/ ./sql/
 COPY src/ ./src/
+COPY scripts/ ./scripts/
 
 RUN mkdir -p /data/incoming && chown node:node /data/incoming
 

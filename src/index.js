@@ -15,13 +15,10 @@ const config = require("./config");
 const pool = require("./database/pool");
 const { initSchema } = require("./database/schema");
 const { startWatcher } = require("./watcher/file-watcher");
-const { insertCdrRecords } = require("./database/cdr-writer");
-const { insertCmrRecords } = require("./database/cmr-writer");
 const { createRestServer } = require("./api/rest-server");
 const { createMcpServer } = require("./mcp/mcp-server");
 const { startRetentionJob } = require("./retention");
-const { enrichCdrRecords } = require("./enrichment/enricher");
-const { enrichCarrier } = require("./enrichment/carrier");
+const { writers } = require("./database/writers");
 const {
   ensureNpanxxData,
   startNpanxxImportJob,
@@ -46,21 +43,14 @@ async function main() {
   await waitForDatabase();
   await initSchema(pool);
 
-  const app = createRestServer(pool);
+  const app = createRestServer(pool, { writers });
   await createMcpServer(app, pool);
 
   app.listen(config.server.port, () => {
     console.log(`MCP + REST API listening on port ${config.server.port}`);
   });
 
-  startWatcher(pool, {
-    cdrWriter: async (p, records) => {
-      const enriched = await enrichCdrRecords(p, records, config.axl);
-      const withCarrier = await enrichCarrier(p, enriched);
-      return insertCdrRecords(p, withCarrier);
-    },
-    cmrWriter: insertCmrRecords,
-  });
+  startWatcher(pool, writers);
 
   startRetentionJob(pool, config.cdr.retentionDays);
 
