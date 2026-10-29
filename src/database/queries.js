@@ -118,11 +118,12 @@ async function searchCdr(pool, params) {
       conditions.push(orClauses.length > 0 ? `(${orClauses.join(" OR ")})` : "false");
     }
   }
-  // datetimeorigination is `timestamp without time zone` holding the
-  // server's local wall-clock time, while start/end/beforeTime arrive as
-  // ISO-8601 UTC strings. Casting the parameter to timestamptz makes
-  // Postgres convert it to local time; a bare compare would drop the "Z"
-  // and shift the window by the UTC offset.
+  // datetimeorigination is `timestamp without time zone` holding the Node
+  // process's local wall-clock time (pool.js pins the session TimeZone to
+  // match), while start/end/beforeTime arrive as ISO-8601 UTC strings.
+  // Casting the parameter to timestamptz makes Postgres convert it to that
+  // local time; a bare compare would drop the "Z" and shift the window by
+  // the UTC offset.
   if (start) {
     conditions.push(`c.datetimeorigination >= $${idx++}::timestamptz`);
     values.push(start);
