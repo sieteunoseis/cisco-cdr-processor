@@ -1,6 +1,6 @@
 const { describe, it } = require("node:test");
 const assert = require("node:assert");
-const { validateQuery } = require("../../src/api/routes/sql");
+const { validateQuery, ensureLimit } = require("../../src/api/routes/sql");
 
 describe("SQL validation", () => {
   it("allows SELECT queries", () => {
@@ -67,5 +67,27 @@ describe("SQL validation", () => {
       "SELECT * FROM cdr_basic WHERE callingpartynumber = '5034181801'",
     );
     assert.strictEqual(result.valid, true);
+  });
+});
+
+describe("ensureLimit", () => {
+  it("appends LIMIT when missing", () => {
+    assert.strictEqual(ensureLimit("SELECT 1"), "SELECT 1\nLIMIT 10000");
+  });
+
+  it("leaves an existing LIMIT alone", () => {
+    assert.strictEqual(ensureLimit("SELECT 1 LIMIT 5"), "SELECT 1 LIMIT 5");
+  });
+
+  it("does not append LIMIT after a trailing semicolon", () => {
+    assert.strictEqual(ensureLimit("SELECT 1;"), "SELECT 1\nLIMIT 10000");
+  });
+
+  it("strips multiple trailing semicolons and whitespace", () => {
+    assert.strictEqual(ensureLimit("SELECT 1 ;; \n"), "SELECT 1\nLIMIT 10000");
+  });
+
+  it("strips a trailing semicolon even when LIMIT is present", () => {
+    assert.strictEqual(ensureLimit("SELECT 1 LIMIT 5;"), "SELECT 1 LIMIT 5");
   });
 });
