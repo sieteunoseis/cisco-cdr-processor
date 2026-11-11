@@ -1,6 +1,6 @@
 // src/api/routes/alerts.js
 const express = require("express");
-const { parseTimeRange } = require("../../database/queries");
+const { parseTimeRange, FAILED_CALL_SQL } = require("../../database/queries");
 
 const VALID_TYPES = [
   "volume_spike",
@@ -174,9 +174,9 @@ async function loadLabelMatchClause(pool, labelId) {
 // Evaluates one enabled rule against live CDR data. volume_spike compares
 // the current window's call count to the window immediately before it
 // (no multi-day baseline — deliberately simple). failure_rate is an
-// absolute threshold: % of calls in the window with a non-"normal
-// clearing" (16) disconnect cause, matching the definition statsCdr's
-// "volume" stat already uses for normal_calls/failed_calls. label_volume
+// absolute threshold: % of calls in the window matching FAILED_CALL_SQL
+// (effective cause not a normal outcome), the same definition statsCdr
+// uses for normal_calls/failed_calls. label_volume
 // counts calls matching an existing label (International, Toll, N11,
 // etc.) against a plain count threshold. long_call flags any call in the
 // window longer than a duration threshold, in seconds.
@@ -319,7 +319,7 @@ async function evaluateRule(pool, rule) {
     `
       SELECT
         count(*) AS total,
-        count(*) FILTER (WHERE destcause_value != 16) AS failed
+        count(*) FILTER (WHERE ${FAILED_CALL_SQL}) AS failed
       FROM cdr
       WHERE datetimeorigination >= now() - interval '${interval}' ${scopeClause}
     `,
@@ -412,7 +412,7 @@ async function breakdownByColumn(pool, column, rule, interval, labelMatch) {
         FROM (
           SELECT ${column} AS number,
             count(*) AS total,
-            count(*) FILTER (WHERE destcause_value != 16) AS failed
+            count(*) FILTER (WHERE ${FAILED_CALL_SQL}) AS failed
           FROM cdr
           WHERE datetimeorigination >= now() - interval '${interval}'
             AND ${column} IS NOT NULL

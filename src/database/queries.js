@@ -1,5 +1,13 @@
 const fs = require("fs");
 
+// A call failed when its effective cause (whichever side's cause is
+// non-zero; CUCM only populates the side that cleared the call) is not a
+// normal outcome. Normal: 0 no error, 16 normal clearing, 17 busy,
+// 18/19 no answer, 262144 conference drop, 393216 call split (transfer).
+// Cause codes: CUCM CDR Admin Guide, "Call Termination Cause Codes".
+const NORMAL_CAUSES = [0, 16, 17, 18, 19, 262144, 393216];
+const FAILED_CALL_SQL = `COALESCE(NULLIF(destcause_value, 0), origcause_value, 0) NOT IN (${NORMAL_CAUSES.join(", ")})`;
+
 // Helper: parse "30m", "2h", "1d", "7d" to Postgres interval string
 function parseTimeRange(last) {
   const match = (last || "24h").match(/^(\d+)([mhdw])$/);
@@ -401,8 +409,8 @@ async function statsCdr(pool, params) {
           date_trunc('${trunc}', datetimeorigination) AS period,
           count(*) AS call_count,
           avg(duration) AS avg_duration_seconds,
-          sum(CASE WHEN destcause_value = 16 THEN 1 ELSE 0 END) AS normal_calls,
-          sum(CASE WHEN destcause_value != 16 THEN 1 ELSE 0 END) AS failed_calls
+          sum(CASE WHEN ${FAILED_CALL_SQL} THEN 0 ELSE 1 END) AS normal_calls,
+          sum(CASE WHEN ${FAILED_CALL_SQL} THEN 1 ELSE 0 END) AS failed_calls
         FROM cdr
         ${timeWhere}
         GROUP BY date_trunc('${trunc}', datetimeorigination)
@@ -468,7 +476,7 @@ async function statsCdr(pool, params) {
           orig_device_location,
           count(*) AS call_count,
           avg(duration) AS avg_duration_seconds,
-          sum(CASE WHEN destcause_value != 16 THEN 1 ELSE 0 END) AS failed_calls
+          sum(CASE WHEN ${FAILED_CALL_SQL} THEN 1 ELSE 0 END) AS failed_calls
         FROM cdr
         ${timeWhere}
         GROUP BY origdevicename, orig_device_description, orig_device_pool, orig_device_location
@@ -485,9 +493,9 @@ async function statsCdr(pool, params) {
           orig_device_location,
           count(*) AS call_count,
           avg(duration) AS avg_duration_seconds,
-          sum(CASE WHEN destcause_value != 16 THEN 1 ELSE 0 END) AS failed_calls,
+          sum(CASE WHEN ${FAILED_CALL_SQL} THEN 1 ELSE 0 END) AS failed_calls,
           round(
-            100.0 * sum(CASE WHEN destcause_value != 16 THEN 1 ELSE 0 END) / nullif(count(*), 0),
+            100.0 * sum(CASE WHEN ${FAILED_CALL_SQL} THEN 1 ELSE 0 END) / nullif(count(*), 0),
             2
           ) AS failure_rate_pct
         FROM cdr
@@ -617,4 +625,5 @@ module.exports = {
   healthCheck,
   parseTimeRange,
   callCountsForNumbers,
+  FAILED_CALL_SQL,
 };
