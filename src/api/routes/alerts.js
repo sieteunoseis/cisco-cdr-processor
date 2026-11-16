@@ -8,6 +8,7 @@ const VALID_TYPES = [
   "label_volume",
   "long_call",
   "quality_degradation",
+  "failed_call",
 ];
 const LOOKBACK_RE = /^\d+[mhdw]$/;
 
@@ -56,6 +57,11 @@ const LABEL_SCOPABLE_TYPES = [
   "failure_rate",
   "quality_degradation",
 ];
+// Types where the label is the selector itself, not an optional scope.
+// failed_call is label-bound so it targets a specific call class (e.g.
+// the Emergency label → failed 911 calls) rather than every failed call
+// org-wide, which failure_rate already covers.
+const LABEL_REQUIRED_TYPES = ["label_volume", "failed_call"];
 
 function validateRulePayload(body) {
   if (!body || typeof body !== "object") {
@@ -102,12 +108,12 @@ function validateRulePayload(body) {
     }
   }
   let labelIdNum = null;
-  if (type === "label_volume") {
+  if (LABEL_REQUIRED_TYPES.includes(type)) {
     labelIdNum = Number(labelId);
     if (!Number.isInteger(labelIdNum) || labelIdNum <= 0) {
       return {
         valid: false,
-        error: "labelId is required for label_volume rules",
+        error: `labelId is required for ${type} rules`,
       };
     }
   } else if (LABEL_SCOPABLE_TYPES.includes(type) && labelId) {
@@ -210,6 +216,34 @@ async function evaluateRule(pool, rule) {
       current: matched,
       baseline: total,
       value: matched,
+      labelName: match.label,
+    };
+  }
+
+  if (rule.type === "failed_call") {
+    const match = await loadLabelMatchClause(pool, rule.labelId);
+    if (!match) {
+      return { ...rule, triggered: false, current: 0, baseline: 0, value: null };
+    }
+    const result = await pool.query(
+      `
+        SELECT
+          count(*) AS total,
+          count(*) FILTER (WHERE ${FAILED_CALL_SQL}) AS failed
+        FROM cdr
+        WHERE datetimeorigination >= now() - interval '${interval}'
+          AND (${match.clause})
+      `,
+      [match.pattern],
+    );
+    const total = parseInt(result.rows[0].total, 10);
+    const failed = parseInt(result.rows[0].failed, 10);
+    return {
+      ...rule,
+      triggered: failed >= rule.threshold,
+      current: failed,
+      baseline: total,
+      value: failed,
       labelName: match.label,
     };
   }
@@ -567,9 +601,42 @@ function createAlertsRouter(pool) {
       let labelMatch = null;
       if (rule.labelId) {
         labelMatch = await loadLabelMatchClause(pool, rule.labelId);
-        if (!labelMatch && rule.type === "label_volume") {
-          return res.json({ byCalling: [], byCalled: [] });
+        if (!labelMatch && LABEL_REQUIRED_TYPES.includes(rule.type)) {
+          return res.json({ byCalling: [], byCalled: [], calls: [] });
         }
+      }
+
+      if (rule.type === "failed_call") {
+        const result = await pool.query(
+          `
+            SELECT
+              c.callingpartynumber, c.finalcalledpartynumber, c.origdevicename,
+              COALESCE(NULLIF(c.destcause_value, 0), c.origcause_value, 0) AS cause_value,
+              cc.description AS cause_description,
+              c.datetimeorigination, c.globalcallid_callid, c.globalcallid_callmanagerid
+            FROM cdr c
+            LEFT JOIN cdr_cause cc
+              ON cc.id = COALESCE(NULLIF(c.destcause_value, 0), c.origcause_value, 0)
+            WHERE c.datetimeorigination >= now() - interval '${interval}'
+              AND (${labelMatch.clause})
+              AND ${FAILED_CALL_SQL}
+            ORDER BY c.datetimeorigination DESC
+            LIMIT 25
+          `,
+          [labelMatch.pattern],
+        );
+        return res.json({
+          calls: result.rows.map((r) => ({
+            callingNumber: r.callingpartynumber,
+            calledNumber: r.finalcalledpartynumber,
+            origDevice: r.origdevicename,
+            causeValue: Number(r.cause_value),
+            causeDescription: r.cause_description,
+            datetimeOrigination: r.datetimeorigination,
+            callId: String(r.globalcallid_callid),
+            callManagerId: String(r.globalcallid_callmanagerid),
+          })),
+        });
       }
 
       if (rule.type === "quality_degradation") {

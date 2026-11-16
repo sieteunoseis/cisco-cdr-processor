@@ -3,7 +3,10 @@
 -- quality threshold (MOS below, or jitter/latency/packet-loss above).
 -- Different shape than the rate-based types — one specific metric column,
 -- like long_call's "any call over threshold" rather than a % of calls.
+-- failed_call (added v1.9.0): count of failed calls matching a required
+-- label (e.g. Emergency → failed 911s). Kept in this migration's CHECK
+-- since it re-runs every boot and must hold the complete type list.
 ALTER TABLE alert_rules DROP CONSTRAINT IF EXISTS alert_rules_type_check;
 ALTER TABLE alert_rules ADD CONSTRAINT alert_rules_type_check
-  CHECK (type IN ('volume_spike', 'failure_rate', 'label_volume', 'long_call', 'quality_degradation'));
+  CHECK (type IN ('volume_spike', 'failure_rate', 'label_volume', 'long_call', 'quality_degradation', 'failed_call'));
 ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS metric VARCHAR(20);
